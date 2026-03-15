@@ -10,21 +10,23 @@ Deploy as a **web service**. Add a **volume**, set its mount path to `/data`, th
 
 Add these in the Railway dashboard under your service **Variables**.
 
-| Variable | Required | Example | Description |
-|----------|----------|---------|-------------|
-| `OUTPUT_DIR` | **Yes** | `/data` | Volume mount path. All data (DB, cache, images) is written here so it persists across restarts. |
-| `REFRESH_INTERVAL_HOURS` | No | `12` | How often to run the pipeline (hours). Default: 12. |
-| `MAX_IMAGE_NODES` | No | `200` | Max nodes in rendered PNG (smaller = more readable). Default: 200. |
-| `URLHAUS_AUTH_KEY` | No | *(from auth.abuse.ch)* | Free key for more URLs (up to 1000 per run). |
-| `NO_DOWNLOAD` | No | `true` | `true` = feed-only (safe). Set `0` to fetch page content (run in container). Default: true. |
-| `CO_OCCURRENCE_ONLY` | No | `0` | Set `1` to keep only URLs with both a brand and an artist. Default: 0. |
-| `SPOTIFY_CLIENT_ID` | No | — | Spotify API client ID (artist popularity). |
-| `SPOTIFY_CLIENT_SECRET` | No | — | Spotify API client secret. |
-| `PHISHTANK_APP_KEY` | No | — | PhishTank app key (registration often disabled). |
-| `MAX_URLS_FROM_HISTORY` | No | — | Cap URLs per run from history (empty = no cap). |
-| `PROCESS_LAST_DAYS` | No | — | Only use URLs seen in last N days (empty = all). |
 
-**Note:** `PORT` is set by Railway; do not override it unless needed.
+| Variable                 | Required | Example                | Description                                                                                     |
+| ------------------------ | -------- | ---------------------- | ----------------------------------------------------------------------------------------------- |
+| `OUTPUT_DIR`             | **Yes**  | `/data`                | Volume mount path. All data (DB, cache, images) is written here so it persists across restarts. |
+| `REFRESH_INTERVAL_HOURS` | No       | `12`                   | How often to run the pipeline (hours). Default: 12.                                             |
+| `MAX_IMAGE_NODES`        | No       | `200`                  | Max nodes in rendered PNG (smaller = more readable). Default: 200.                              |
+| `URLHAUS_AUTH_KEY`       | No       | *(from auth.abuse.ch)* | Free key for more URLs (up to 1000 per run).                                                    |
+| `NO_DOWNLOAD`            | No       | `true`                 | `true` = feed-only (safe). Set `0` to fetch page content (run in container). Default: true.     |
+| `CO_OCCURRENCE_ONLY`     | No       | `0`                    | Set `1` to keep only URLs with both a brand and an artist. Default: 0.                          |
+| `SPOTIFY_CLIENT_ID`      | No       | —                      | Spotify API client ID (artist popularity).                                                      |
+| `SPOTIFY_CLIENT_SECRET`  | No       | —                      | Spotify API client secret.                                                                      |
+| `PHISHTANK_APP_KEY`      | No       | —                      | PhishTank app key (registration often disabled).                                                |
+| `MAX_URLS_FROM_HISTORY`  | No       | —                      | Cap URLs per run from history (empty = no cap).                                                 |
+| `PROCESS_LAST_DAYS`      | No       | —                      | Only use URLs seen in last N days (empty = all).                                                |
+
+
+**Note:** The app listens on the port given by `PORT` (default 8080). In Railway’s **Settings → Networking**, if it asks “port your app is listening on”, enter **8080** so traffic is routed correctly.
 
 ---
 
@@ -34,3 +36,4 @@ Add these in the Railway dashboard under your service **Variables**.
 2. Set **Variables**: at minimum `OUTPUT_DIR=/data`.
 3. **Start command:** `python app.py` (or in Procfile: `web: python app.py`).
 4. Deploy. The first run may take a few minutes; then open `/` to see the latest graph image.
+
