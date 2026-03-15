@@ -1,0 +1,14 @@
+cd C:\Users\billy\phishing_graph_prototype
+venv\Scripts\activate.bat
+python phishing_brand_graph.py
+set SPOTIFY_CLIENT_ID=6eba8e1c9c3d45c6906c8eabb162d57a
+set SPOTIFY_CLIENT_SECRET=bb3ee20295fd4b5fbd2135fcaf64bdbd
+python phishing_brand_graph.py
+dir
+python phishing_brand_graph.py
+history
+cmd
+doskey /history > cmd_history.txt
+
+
+docker run --rm -v "%cd%":/app -w /app -e NO_DOWNLOAD=0 -e CO_OCCURRENCE_ONLY=1 -e MAX_URLS=10000 -e SPOTIFY_CLIENT_ID=6eba8e1c9c3d45c6906c8eabb162d57a -e SPOTIFY_CLIENT_SECRET=bb3ee20295fd4b5fbd2135fcaf64bdbd -e URLHAUS_AUTH_KEY=37a5b40c742e0c20b39bf6caac61273803891dd0df5c61e3 phishing-graph
