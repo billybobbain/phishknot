@@ -58,10 +58,7 @@ def index():
         "<h1>Phishing graph</h1>",
     ]
     if latest.exists():
-        lines.append(f"<p><strong>Latest</strong> (full graph)</p><img src='/images/latest.png' alt='Latest graph' style='max-width:100%;' />")
-        focus_img = IMAGES_DIR / "latest_focus.png"
-        if focus_img.exists():
-            lines.append(f"<p><strong>Focus</strong> (domains, brands, artists only)</p><img src='/images/latest_focus.png' alt='Focus graph' style='max-width:100%;' />")
+        lines.append(f"<p><strong>Latest</strong> (brands & artists only)</p><img src='/images/latest.png' alt='Latest graph' style='max-width:100%;' />")
         lines.append("<p><a href='/graph/interactive'>Interactive graph</a></p>")
     else:
         lines.append("<p>No data yet. The first pipeline run will create an image.</p>")
