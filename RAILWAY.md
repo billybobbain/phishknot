@@ -45,3 +45,5 @@ Add these in the Railway dashboard under your service **Variables**. If you use 
 
 **If /health and / don’t respond (no file error):** In **Deployments → View logs**, look for `Listening on 0.0.0.0:XXXX`. If it’s missing, the app didn’t start. If it’s there but you get 502, in **Settings → Networking** set the port to that number (e.g. 8080).
 
+**Data not persisting / "No data yet" on every restart / tiny graph:** Data and URL history are only kept if written to a **volume**. Otherwise they're lost on each deploy. (1) Add variable **OUTPUT_DIR** = **/data**. (2) Add a **Volume** to the service with mount path **/data**. (3) Redeploy. Check **/debug** — you should see `output_dir_set: true` and after a run `latest_png_exists: true`, `url_history_db_exists: true`. URL history then accumulates so the graph grows over time.
+

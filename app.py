@@ -8,12 +8,15 @@ import threading
 import time
 from pathlib import Path
 
-from flask import Flask, send_from_directory, abort
+from flask import Flask, send_from_directory, abort, jsonify
 
 # Output dir for pipeline and images (must be set before importing phishing_brand_graph in the worker)
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR") or os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", "")
 if OUTPUT_DIR:
     os.environ.setdefault("OUTPUT_DIR", OUTPUT_DIR)
+else:
+    # So pipeline and any later imports see it if Railway injects it later
+    os.environ.setdefault("OUTPUT_DIR", "")
 DATA_DIR = Path(OUTPUT_DIR).resolve() if OUTPUT_DIR else Path(__file__).resolve().parent
 IMAGES_DIR = DATA_DIR / "output"
 
@@ -45,6 +48,21 @@ def scheduler_loop():
 def health():
     """Simple health check so Railway can verify the app is up (returns 200 immediately)."""
     return "ok", 200
+
+
+@app.route("/debug")
+def debug():
+    """Persistence check: confirm OUTPUT_DIR is set and volume files exist. Use to debug data loss on restart."""
+    latest = IMAGES_DIR / "latest.png"
+    history_db = DATA_DIR / "url_history.db"
+    return jsonify({
+        "output_dir_set": bool(OUTPUT_DIR),
+        "output_dir": OUTPUT_DIR or "(not set — data will not persist across restarts)",
+        "data_dir": str(DATA_DIR),
+        "images_dir": str(IMAGES_DIR),
+        "latest_png_exists": latest.is_file(),
+        "url_history_db_exists": history_db.is_file(),
+    })
 
 
 @app.route("/")
@@ -104,6 +122,8 @@ def startup_pipeline_once():
 
 
 if __name__ == "__main__":
+    if not OUTPUT_DIR:
+        print("WARNING: OUTPUT_DIR is not set. Data (DB, images) is written to the container and is LOST on restart. Set OUTPUT_DIR=/data and mount a volume at /data.")
     # Start Flask immediately so Railway gets 200 (no 502). Run first pipeline in background.
     t = threading.Thread(target=startup_pipeline_once, daemon=True)
     t.start()
