@@ -596,6 +596,37 @@ def _subgraph_for_display(G, max_nodes):
     return largest.subgraph(top).copy()
 
 
+def _focus_subgraph(G):
+    """Return a subgraph with only domain, brand, artist nodes (no phishing_url). Edges: brand-domain, artist-domain (via shared URL), artist-brand (co_mentioned)."""
+    focus_types = {"domain", "brand", "artist"}
+    nodes = [n for n in G.nodes() if G.nodes[n].get("type") in focus_types]
+    if not nodes:
+        return G.subgraph(nodes).copy()
+    H = nx.DiGraph()
+    for n in nodes:
+        H.add_node(n, **{k: v for k, v in G.nodes[n].items()})
+    # For each phishing_url u: u -> d (domain), b -> u (brand), a -> u (artist). Add (b,d), (a,d) and keep (a,b) from co_mentioned.
+    for u in G.nodes():
+        if G.nodes[u].get("type") != "phishing_url":
+            continue
+        succ = list(G.successors(u))
+        pred = list(G.predecessors(u))
+        d_ids = [v for v in succ if G.nodes[v].get("type") == "domain"]
+        b_ids = [v for v in pred if G.nodes[v].get("type") == "brand"]
+        a_ids = [v for v in pred if G.nodes[v].get("type") == "artist"]
+        for d in d_ids:
+            for b in b_ids:
+                if H.has_node(b) and H.has_node(d):
+                    H.add_edge(b, d, relationship_type="brand_referenced_on_domain", evidence_source=G.nodes[u].get("full_url", ""))
+            for a in a_ids:
+                if H.has_node(a) and H.has_node(d):
+                    H.add_edge(a, d, relationship_type="mentioned_on_domain", evidence_source=G.nodes[u].get("full_url", ""))
+    for u, v, data in G.edges(data=True):
+        if data.get("relationship_type") == "co_mentioned" and H.has_node(u) and H.has_node(v):
+            H.add_edge(u, v, relationship_type="co_mentioned", evidence_source=data.get("evidence_source", ""))
+    return H
+
+
 def render_graph_to_image(G, path, max_nodes=None):
     """Render the graph to a PNG for web display. Uses short labels and colors by node type. Caps nodes for readability."""
     import matplotlib
@@ -619,10 +650,58 @@ def render_graph_to_image(G, path, max_nodes=None):
     nx.draw_networkx_edges(H, pos, edge_color="#cccccc", alpha=0.5, arrows=True, arrowsize=10)
     nx.draw_networkx_labels(H, pos, labels, font_size=6)
     plt.axis("off")
+    # Legend: map color to node type
+    from matplotlib.patches import Patch
+    legend_handles = [
+        Patch(facecolor="#4a90d9", label="phishing_url"),
+        Patch(facecolor="#888888", label="domain"),
+        Patch(facecolor="#2ecc71", label="brand"),
+        Patch(facecolor="#e67e22", label="artist"),
+    ]
+    plt.legend(handles=legend_handles, loc="upper left", fontsize=8)
     plt.tight_layout()
     plt.savefig(str(path), dpi=100, bbox_inches="tight")
     plt.close()
     print(f"Rendered graph image to {path} ({H.number_of_nodes()} nodes).")
+
+
+def export_interactive_html(G, path, max_nodes=None):
+    """Export an interactive Plotly HTML graph (zoom, pan, hover for type/label/full_url)."""
+    try:
+        import plotly.graph_objects as go
+    except ImportError:
+        print("Plotly not installed; skipping interactive HTML export.")
+        return
+    max_nodes = max_nodes if max_nodes is not None else MAX_IMAGE_NODES
+    H = _subgraph_for_display(G, max_nodes)
+    if H.number_of_nodes() == 0:
+        return
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        pos = nx.spring_layout(H, k=1.5, seed=42, iterations=50)
+    except Exception:
+        pos = nx.random_layout(H, seed=42)
+    node_list = list(H.nodes())
+    type_colors = {"phishing_url": "#4a90d9", "domain": "#888888", "brand": "#2ecc71", "artist": "#e67e22"}
+    x = [pos[n][0] for n in node_list]
+    y = [pos[n][1] for n in node_list]
+    labels = [str((H.nodes[n].get("label") or H.nodes[n].get("type") or n))[:40] for n in node_list]
+    node_types = [H.nodes[n].get("type", "") for n in node_list]
+    full_urls = [H.nodes[n].get("full_url", "") or "" for n in node_list]
+    hover_text = [f"<b>{lb}</b><br>type: {t}<br>{u[:80]}{'...' if len(u) > 80 else ''}" for lb, t, u in zip(labels, node_types, full_urls)]
+    colors = [type_colors.get(t, "#95a5a6") for t in node_types]
+    edge_x, edge_y = [], []
+    for u, v in H.edges():
+        if u in pos and v in pos:
+            edge_x.extend([pos[u][0], pos[v][0], None])
+            edge_y.extend([pos[u][1], pos[v][1], None])
+    edge_trace = go.Scatter(x=edge_x, y=edge_y, line=dict(width=0.5, color="#cccccc"), hoverinfo="none", mode="lines")
+    node_trace = go.Scatter(x=x, y=y, text=labels, mode="markers+text", textposition="top center", textfont=dict(size=8), marker=dict(size=10, color=colors, line=dict(width=0.5)), hovertext=hover_text, hoverinfo="text", name="")
+    fig = go.Figure(data=[edge_trace, node_trace])
+    fig.update_layout(showlegend=False, title="Phishing graph (interactive)", xaxis=dict(showgrid=False, zeroline=False, showticklabels=False), yaxis=dict(showgrid=False, zeroline=False, showticklabels=False), margin=dict(b=20, l=20, r=20, t=40), height=700)
+    fig.write_html(str(path))
+    print(f"Exported interactive graph to {path} ({H.number_of_nodes()} nodes).")
 
 
 def export_edges_csv(G, path):
@@ -845,6 +924,10 @@ def main():
     # Rendered images for web (Railway / stream)
     OUTPUT_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
     render_graph_to_image(G, OUTPUT_IMAGES_DIR / "latest.png")
+    G_focus = _focus_subgraph(G)
+    if G_focus.number_of_nodes() > 0:
+        render_graph_to_image(G_focus, OUTPUT_IMAGES_DIR / "latest_focus.png")
+    export_interactive_html(G, OUTPUT_IMAGES_DIR / "graph_interactive.html")
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M")
     render_graph_to_image(G, OUTPUT_IMAGES_DIR / f"graph_{ts}.png")
     # Keep only last 5 timestamped images
