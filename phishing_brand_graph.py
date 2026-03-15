@@ -89,7 +89,7 @@ ARTIST_KEYWORDS = [
     "dua lipa", "coldplay", "adele", "rihanna", "lady gaga", "bruno mars",
     "post malone", "travis scott", "kendrick lamar", "olivia rodrigo",
     "miley cyrus", "katy perry", "shawn mendes", "selena gomez", "nicki minaj",
-    "eminem", "kanye", "ye", "bts", "blackpink",
+    "eminem", "kanye", "ye", "yeat", "bts", "blackpink",
 ]
 
 # Optional second feed: PhishTank "online-valid". (PhishTank registration is often disabled; use URLhaus instead.)
@@ -941,6 +941,21 @@ def main():
     OUTPUT_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
     render_graph_to_image(G, OUTPUT_IMAGES_DIR / "latest.png")
     export_interactive_html(G, OUTPUT_IMAGES_DIR / "graph_interactive.html")
+    H = _brand_artist_subgraph(G)
+    brands_count = sum(1 for n in H.nodes() if H.nodes[n].get("type") == "brand")
+    artists_count = sum(1 for n in H.nodes() if H.nodes[n].get("type") == "artist")
+    stats = {
+        "display_nodes": H.number_of_nodes(),
+        "full_nodes": G.number_of_nodes(),
+        "full_edges": G.number_of_edges(),
+        "brands_count": brands_count,
+        "artists_count": artists_count,
+    }
+    try:
+        with open(OUTPUT_IMAGES_DIR / "stats.json", "w", encoding="utf-8") as f:
+            json.dump(stats, f, indent=0)
+    except Exception:
+        pass
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M")
     render_graph_to_image(G, OUTPUT_IMAGES_DIR / f"graph_{ts}.png")
     # Keep only last 5 timestamped images

@@ -2,6 +2,7 @@
 Web app for phishing graph: serves latest graph images and runs the pipeline on a schedule.
 Set OUTPUT_DIR to the Railway volume path (e.g. /data) so data and images persist.
 """
+import json
 import os
 import re
 import threading
@@ -25,6 +26,19 @@ app = Flask(__name__)
 # Safe filename: alphanumeric, underscore, hyphen, one dot
 SAFE_FILENAME = re.compile(r"^[a-zA-Z0-9_.-]+$")
 
+STATS_FILE = IMAGES_DIR / "stats.json"
+
+
+def _read_stats():
+    """Read last pipeline stats (display_nodes, full_nodes, full_edges, brands_count, artists_count)."""
+    if not STATS_FILE.is_file():
+        return None
+    try:
+        with open(STATS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
 
 def run_pipeline():
     """Run the full pipeline (feeds, history, graph, images)."""
@@ -33,9 +47,10 @@ def run_pipeline():
 
 
 def scheduler_loop():
-    """Background: run pipeline every REFRESH_INTERVAL_HOURS."""
+    """Background: run pipeline every REFRESH_INTERVAL_HOURS. Sleep first so only startup_pipeline_once runs at startup."""
     interval_hours = float(os.environ.get("REFRESH_INTERVAL_HOURS", "12"))
     interval_sec = max(60, interval_hours * 3600)
+    time.sleep(interval_sec)
     while True:
         try:
             run_pipeline()
@@ -55,14 +70,23 @@ def debug():
     """Persistence check: confirm OUTPUT_DIR is set and volume files exist. Use to debug data loss on restart."""
     latest = IMAGES_DIR / "latest.png"
     history_db = DATA_DIR / "url_history.db"
-    return jsonify({
+    out = {
         "output_dir_set": bool(OUTPUT_DIR),
         "output_dir": OUTPUT_DIR or "(not set — data will not persist across restarts)",
         "data_dir": str(DATA_DIR),
         "images_dir": str(IMAGES_DIR),
         "latest_png_exists": latest.is_file(),
         "url_history_db_exists": history_db.is_file(),
-    })
+    }
+    stats = _read_stats()
+    if stats is not None:
+        out["graph_stats"] = stats
+        out["graph_summary"] = (
+            f"Display: {stats.get('display_nodes', 0)} nodes "
+            f"({stats.get('brands_count', 0)} brand, {stats.get('artists_count', 0)} artist). "
+            f"Full graph: {stats.get('full_nodes', 0)} nodes, {stats.get('full_edges', 0)} edges."
+        )
+    return jsonify(out)
 
 
 @app.route("/")
@@ -77,6 +101,14 @@ def index():
     ]
     if latest.exists():
         lines.append(f"<p><strong>Latest</strong> (brands & artists only)</p><img src='/images/latest.png' alt='Latest graph' style='max-width:100%;' />")
+        stats = _read_stats()
+        if stats is not None:
+            summary = (
+                f"Display: {stats.get('display_nodes', 0)} nodes "
+                f"({stats.get('brands_count', 0)} brand, {stats.get('artists_count', 0)} artist). "
+                f"Full graph: {stats.get('full_nodes', 0)} nodes, {stats.get('full_edges', 0)} edges."
+            )
+            lines.append(f"<p>{summary}</p>")
         lines.append("<p><a href='/graph/interactive'>Interactive graph</a></p>")
     else:
         lines.append("<p>No data yet. The first pipeline run will create an image.</p>")
