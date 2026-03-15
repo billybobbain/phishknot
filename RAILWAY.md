@@ -8,7 +8,7 @@ Deploy as a **web service**. Add a **volume**, set its mount path to `/data`, th
 
 ## Environment variables (Railway)
 
-Add these in the Railway dashboard under your service **Variables**.
+Add these in the Railway dashboard under your service **Variables**. If you use **shared variables** (project-level), you still have to **assign** them to this service so the container sees them.
 
 
 | Variable                 | Required | Example                | Description                                                                                     |
@@ -33,7 +33,11 @@ Add these in the Railway dashboard under your service **Variables**.
 ## Setup checklist
 
 1. Create a **Volume** and set mount path to `/data`.
-2. Set **Variables**: at minimum `OUTPUT_DIR=/data`.
-3. **Start command:** `python app.py` (or in Procfile: `web: python app.py`).
-4. Deploy. The first run may take a few minutes; then open `/` to see the latest graph image.
+2. Set **Variables**: at minimum `OUTPUT_DIR=/data` (so DB, cache, and images use the volume and persist).
+3. **Start command:** Railway must run the **web app**, not the one-off script. Set the start command to:
+   ```bash
+   python app.py
+   ```
+   (If you use a Procfile, the `web` process should be `python app.py`.) If Railway runs `phishing_brand_graph.py` instead, the pipeline runs once and exits, so the container stops and the site never responds.
+4. Deploy. Open your Railway URL (root only, no path): e.g. `https://your-app.up.railway.app/` — that’s the page. No subpath (e.g. no `/app` or `/graph`). To confirm the app is up before images exist, hit `https://your-app.up.railway.app/health` (returns `ok`). The first pipeline run happens in the background; refresh `/` after a minute or two to see the image.
 

@@ -23,7 +23,7 @@ import json
 import time
 import csv
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse, parse_qs, unquote
 from pathlib import Path
 
@@ -133,7 +133,7 @@ def merge_urls_into_history(urls, source="openphish"):
     if not urls:
         return 0
     conn = _get_history_conn()
-    now = datetime.utcnow().isoformat() + "Z"
+    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     try:
         count = 0
         for url in urls:
@@ -156,7 +156,7 @@ def get_urls_from_history(limit=None, since_days=None):
     conn = _get_history_conn()
     try:
         if since_days is not None:
-            since = (datetime.utcnow() - timedelta(days=since_days)).isoformat() + "Z"
+            since = (datetime.now(timezone.utc) - timedelta(days=since_days)).isoformat().replace("+00:00", "Z")
             query = "SELECT url FROM url_history WHERE last_seen >= ? ORDER BY last_seen DESC"
             cur = conn.execute(query, (since,))
         else:
@@ -845,7 +845,7 @@ def main():
     # Rendered images for web (Railway / stream)
     OUTPUT_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
     render_graph_to_image(G, OUTPUT_IMAGES_DIR / "latest.png")
-    ts = datetime.utcnow().strftime("%Y-%m-%d_%H%M")
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M")
     render_graph_to_image(G, OUTPUT_IMAGES_DIR / f"graph_{ts}.png")
     # Keep only last 5 timestamped images
     hist = sorted(OUTPUT_IMAGES_DIR.glob("graph_*.png"), key=lambda p: p.stat().st_mtime, reverse=True)

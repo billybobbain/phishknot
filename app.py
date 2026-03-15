@@ -41,6 +41,12 @@ def scheduler_loop():
         time.sleep(interval_sec)
 
 
+@app.route("/health")
+def health():
+    """Simple health check so Railway can verify the app is up (returns 200 immediately)."""
+    return "ok", 200
+
+
 @app.route("/")
 def index():
     """Show latest graph image and list recent timestamped images."""
@@ -77,17 +83,22 @@ def serve_image(filename):
     return send_from_directory(IMAGES_DIR, filename, mimetype="image/png")
 
 
-if __name__ == "__main__":
-    # Run pipeline once on startup so there is at least one image
+def startup_pipeline_once():
+    """Run pipeline once in the background so the server can respond immediately."""
     if OUTPUT_DIR:
-        print("Running pipeline once on startup...")
+        print("Running pipeline once on startup (background)...")
         try:
             run_pipeline()
         except Exception as e:
             print(f"Startup pipeline error: {e}")
-    # Start background scheduler
+
+
+if __name__ == "__main__":
+    # Start Flask immediately so Railway gets 200 (no 502). Run first pipeline in background.
+    t = threading.Thread(target=startup_pipeline_once, daemon=True)
+    t.start()
     thread = threading.Thread(target=scheduler_loop, daemon=True)
     thread.start()
-    # Serve
     port = int(os.environ.get("PORT", "8080"))
+    print(f"Listening on 0.0.0.0:{port}")
     app.run(host="0.0.0.0", port=port)
