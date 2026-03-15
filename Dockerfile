@@ -1,5 +1,4 @@
-# Run the phishing graph script in an isolated container when using NO_DOWNLOAD=0.
-# No browser or JS execution — only HTTP requests + HTML parsing.
+# Web app + pipeline. For Railway: build from this so app.py and phishing_brand_graph.py are in /app.
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -11,11 +10,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY phishing_brand_graph.py .
+COPY app.py phishing_brand_graph.py .
 
 ENV PYTHONUNBUFFERED=1
 
-# Mount your project dir so the script sees its folder and writes outputs there:
-#   docker run --rm -v C:\Users\billy\phishing_graph_prototype:/app -w /app -e NO_DOWNLOAD=0 -e CO_OCCURRENCE_ONLY=1 -e MAX_URLS=100 your-image
-# Then url_history.db, *.gexf, *.csv are written to the host folder.
-CMD ["python", "phishing_brand_graph.py"]
+# Railway: set OUTPUT_DIR=/data and mount a volume at /data. Start command can stay default (this CMD).
+CMD ["python", "app.py"]
