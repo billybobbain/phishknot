@@ -34,10 +34,12 @@ Add these in the Railway dashboard under your service **Variables**. If you use 
 
 1. Create a **Volume** and set mount path to `/data`.
 2. Set **Variables**: at minimum `OUTPUT_DIR=/data` (so DB, cache, and images use the volume and persist).
-3. **Start command:** Railway must run the **web app**, not the one-off script. Set the start command to:
+3. **Start command:** Railway must run the **web app**, not the one-off script. The repo includes a **`railway.toml`** that sets `startCommand = "python app.py"` (config-as-code overrides the dashboard). If you removed it or use a custom config path, set Start Command in the service to:
    ```bash
    python app.py
    ```
-   (If you use a Procfile, the `web` process should be `python app.py`.) If Railway runs `phishing_brand_graph.py` instead, the pipeline runs once and exits, so the container stops and the site never responds.
-4. Deploy. Open your Railway URL (root only, no path): e.g. `https://your-app.up.railway.app/` — that’s the page. No subpath (e.g. no `/app` or `/graph`). To confirm the app is up before images exist, hit `https://your-app.up.railway.app/health` (returns `ok`). The first pipeline run happens in the background; refresh `/` after a minute or two to see the image.
+   If Railway runs `phishing_brand_graph.py` instead, the pipeline runs once and exits, so the container stops and the site never responds.
+4. Deploy. Open your Railway URL (root only, no path): e.g. `https://your-app.up.railway.app/` — that’s the page. No subpath (e.g. no `/app` or `/graph`). Hit `/health` to confirm the app is up (returns `ok`). The first pipeline run happens in the background; refresh `/` after a minute or two to see the image.
+
+**If /health and / still don't respond:** In Railway, open **Deployments → your deployment → View logs** (runtime logs, not build). Look for `Listening on 0.0.0.0:XXXX`. If it's missing, the app never bound (wrong start command or crash on import). If it's there but you still get 502, in **Settings → Networking** set the port to that number (e.g. 8080).
 

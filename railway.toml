@@ -1,0 +1,5 @@
+# Force Railway to run the web app (not the one-off script). Config-as-code overrides dashboard.
+[deploy]
+startCommand = "python app.py"
+healthcheckPath = "/health"
+healthcheckTimeout = 300
