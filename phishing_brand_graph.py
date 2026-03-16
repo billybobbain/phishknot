@@ -1262,8 +1262,16 @@ def export_interactive_html(G, path, max_nodes=None):
     edge_trace = go.Scatter(x=edge_x, y=edge_y, line=dict(width=0.5, color="#cccccc"), hoverinfo="none", mode="lines")
     node_trace = go.Scatter(x=x, y=y, text=labels, mode="markers+text", textposition="top center", textfont=dict(size=8), marker=dict(size=10, color=colors, line=dict(width=0.5)), hovertext=hover_text, hoverinfo="text", name="")
     fig = go.Figure(data=[edge_trace, node_trace])
-    fig.update_layout(showlegend=False, title="Phishing graph (interactive)", xaxis=dict(showgrid=False, zeroline=False, showticklabels=False), yaxis=dict(showgrid=False, zeroline=False, showticklabels=False), margin=dict(b=20, l=20, r=20, t=40), height=700)
-    fig.write_html(str(path))
+    fig.update_layout(
+        showlegend=False,
+        title="Phishing graph (interactive)",
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        margin=dict(b=20, l=20, r=20, t=40),
+        autosize=True,
+        height=700,
+    )
+    fig.write_html(str(path), config={"responsive": True})
     print(f"Exported interactive graph to {path} ({H.number_of_nodes()} nodes).")
 
 
