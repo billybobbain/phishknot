@@ -1242,17 +1242,41 @@ def export_interactive_html(G, path, max_nodes=None):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        pos = nx.spring_layout(H, k=1.5, seed=42, iterations=50)
+        # Slightly larger k spreads nodes out a bit more, which helps tapping on mobile.
+        pos = nx.spring_layout(H, k=1.8, seed=42, iterations=50)
     except Exception:
         pos = nx.random_layout(H, seed=42)
     node_list = list(H.nodes())
     type_colors = {"brand": "#2ecc71", "artist": "#e67e22"}
     x = [pos[n][0] for n in node_list]
     y = [pos[n][1] for n in node_list]
-    labels = [str((H.nodes[n].get("label") or H.nodes[n].get("type") or n))[:40] for n in node_list]
-    node_types = [H.nodes[n].get("type", "") for n in node_list]
-    full_urls = [H.nodes[n].get("full_url", "") or "" for n in node_list]
-    hover_text = [f"<b>{lb}</b><br>type: {t}<br>{u[:80]}{'...' if len(u) > 80 else ''}" for lb, t, u in zip(labels, node_types, full_urls)]
+
+    # Degree-based sizing and label selection
+    deg = dict(H.degree())
+    base_size = 8
+    size_multiplier = 2
+    degree_cap = 10
+    marker_sizes = []
+    text_labels = []
+    hover_labels = []
+    node_types = []
+    full_urls = []
+    for n in node_list:
+        d = deg.get(n, 0)
+        marker_sizes.append(base_size + size_multiplier * min(d, degree_cap))
+        lbl = str((H.nodes[n].get("label") or H.nodes[n].get("type") or n)).strip()
+        short_label = lbl[:40]
+        # Only show text label for nodes with degree > 1 to reduce clutter; all nodes still have hover.
+        text_labels.append(short_label if d > 1 else "")
+        hover_labels.append(short_label or H.nodes[n].get("type") or str(n))
+        node_types.append(H.nodes[n].get("type", ""))
+        full_urls.append(H.nodes[n].get("full_url", "") or "")
+
+    hover_text = [
+        f"<b>{lb}</b><br>type: {t}<br>connections: {deg.get(n, 0)}"
+        f"<br>{u[:80]}{'...' if len(u) > 80 else ''}"
+        for n, lb, t, u in zip(node_list, hover_labels, node_types, full_urls)
+    ]
     colors = [type_colors.get(t, "#95a5a6") for t in node_types]
     edge_x, edge_y = [], []
     for u, v in H.edges():
@@ -1260,7 +1284,18 @@ def export_interactive_html(G, path, max_nodes=None):
             edge_x.extend([pos[u][0], pos[v][0], None])
             edge_y.extend([pos[u][1], pos[v][1], None])
     edge_trace = go.Scatter(x=edge_x, y=edge_y, line=dict(width=0.5, color="#cccccc"), hoverinfo="none", mode="lines")
-    node_trace = go.Scatter(x=x, y=y, text=labels, mode="markers+text", textposition="top center", textfont=dict(size=8), marker=dict(size=10, color=colors, line=dict(width=0.5)), hovertext=hover_text, hoverinfo="text", name="")
+    node_trace = go.Scatter(
+        x=x,
+        y=y,
+        text=text_labels,
+        mode="markers+text",
+        textposition="top center",
+        textfont=dict(size=11),
+        marker=dict(size=marker_sizes, color=colors, line=dict(width=0.5)),
+        hovertext=hover_text,
+        hoverinfo="text",
+        name="",
+    )
     fig = go.Figure(data=[edge_trace, node_trace])
     fig.update_layout(
         showlegend=False,
@@ -1270,6 +1305,8 @@ def export_interactive_html(G, path, max_nodes=None):
         margin=dict(b=20, l=20, r=20, t=40),
         autosize=True,
         height=700,
+        dragmode="pan",
+        hovermode="closest",
     )
     fig.write_html(str(path), config={"responsive": True})
     print(f"Exported interactive graph to {path} ({H.number_of_nodes()} nodes).")
