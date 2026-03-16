@@ -42,6 +42,11 @@ SPOTIFY_API_BASE = "https://api.spotify.com/v1"
 _OUTPUT_BASE = Path(os.environ.get("OUTPUT_DIR", "")).resolve() if os.environ.get("OUTPUT_DIR") else Path(__file__).resolve().parent
 CACHE_DIR = _OUTPUT_BASE / "cache"
 SPOTIFY_CACHE_FILE = CACHE_DIR / "spotify_artists.json"
+LASTFM_CACHE_FILE = CACHE_DIR / "lastfm_top_artists.json"
+LASTFM_API_KEY = os.environ.get("LASTFM_API_KEY", "").strip()
+LASTFM_TOP_ARTISTS_LIMIT = int(os.environ.get("LASTFM_TOP_ARTISTS_LIMIT", "200"))
+LASTFM_CACHE_HOURS = float(os.environ.get("LASTFM_CACHE_HOURS", "24"))
+LASTFM_API_BASE = "https://ws.audioscrobbler.com/2.0/"
 EDGES_CSV = _OUTPUT_BASE / "graph_edges.csv"
 URL_BRANDS_CSV = _OUTPUT_BASE / "url_brands.csv"  # Human-readable: URL, Domain, Brands, Artists
 GRAPH_GEXF = _OUTPUT_BASE / "phishing_graph.gexf"
@@ -544,6 +549,104 @@ def _phishtank_feed_url():
         return f"https://data.phishtank.com/data/{PHISHTANK_APP_KEY}/online-valid.json"
     return "https://data.phishtank.com/data/online-valid.json"
 
+
+# -----------------------------------------------------------------------------
+# Last.fm top artists (optional; extends ARTIST_KEYWORDS for matching)
+# -----------------------------------------------------------------------------
+# Combined artist list (static + Last.fm) set at pipeline start; None = use ARTIST_KEYWORDS only.
+_artist_keywords_combined = None
+
+
+def fetch_lastfm_top_artists(api_key, limit=200):
+    """Fetch top artists from Last.fm chart.getTopArtists (paginated). Returns list of {"name": "..."}."""
+    if not api_key:
+        return []
+    out = []
+    page = 1
+    per_page = 50
+    while len(out) < limit:
+        r = requests.get(
+            LASTFM_API_BASE,
+            params={
+                "method": "chart.gettopartists",
+                "api_key": api_key,
+                "format": "json",
+                "limit": per_page,
+                "page": page,
+            },
+            headers={"User-Agent": USER_AGENT},
+            timeout=15,
+        )
+        if r.status_code != 200:
+            break
+        data = r.json()
+        artists = data.get("artists", {}).get("artist", [])
+        if not artists:
+            break
+        for a in artists:
+            name = (a.get("name") or "").strip()
+            if name and len(name) >= 2:
+                out.append({"name": name})
+        if len(artists) < per_page:
+            break
+        page += 1
+        time.sleep(0.2)
+    return out[:limit]
+
+
+def load_lastfm_cache():
+    """Load Last.fm top artists from cache file. Returns list of artist name strings, or None if missing/expired/invalid."""
+    if not LASTFM_CACHE_FILE.is_file():
+        return None
+    try:
+        age_hours = (time.time() - LASTFM_CACHE_FILE.stat().st_mtime) / 3600
+        if age_hours > LASTFM_CACHE_HOURS:
+            return None
+        with open(LASTFM_CACHE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        names = data.get("names") if isinstance(data, dict) else data
+        if isinstance(names, list):
+            return [str(n).strip() for n in names if n and len(str(n).strip()) >= 2]
+        return None
+    except Exception:
+        return None
+
+
+def refresh_lastfm_cache_if_needed():
+    """If LASTFM_API_KEY is set and cache is missing or expired, fetch from Last.fm and write cache."""
+    if not LASTFM_API_KEY:
+        return
+    if load_lastfm_cache() is not None:
+        return
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        artists = fetch_lastfm_top_artists(LASTFM_API_KEY, limit=LASTFM_TOP_ARTISTS_LIMIT)
+        if not artists:
+            return
+        names = [a["name"] for a in artists]
+        with open(LASTFM_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump({"names": names, "updated": datetime.now(timezone.utc).isoformat()}, f, indent=0)
+        print(f"Last.fm: cached {len(names)} top artists (refresh in {LASTFM_CACHE_HOURS}h).")
+    except Exception as e:
+        print(f"Last.fm fetch failed (optional): {e}")
+
+
+def build_combined_artist_keywords():
+    """Return combined list: ARTIST_KEYWORDS + Last.fm cached names (lowercased, deduped, order preserved)."""
+    static = list(ARTIST_KEYWORDS)
+    lastfm = load_lastfm_cache()
+    if not lastfm:
+        return static
+    seen = {s.lower() for s in static}
+    out = list(static)
+    for name in lastfm:
+        n = name.strip().lower()
+        if n and len(n) >= 2 and n not in seen:
+            seen.add(n)
+            out.append(n)
+    return out
+
+
 # -----------------------------------------------------------------------------
 # URL history (local SQLite: accumulate URLs across runs for more volume)
 # -----------------------------------------------------------------------------
@@ -714,9 +817,10 @@ def find_brands_in_text(text):
 
 
 def find_artists_in_text(text):
-    """Return set of artist keywords found in text (lowercase)."""
+    """Return set of artist keywords found in text (lowercase). Uses static + Last.fm combined list if set."""
+    artist_list = _artist_keywords_combined if _artist_keywords_combined is not None else ARTIST_KEYWORDS
     found = set()
-    for a in ARTIST_KEYWORDS:
+    for a in artist_list:
         if a in text:
             found.add(a)
     return found
@@ -1261,6 +1365,13 @@ def print_stats(G, results):
 # Main pipeline
 # -----------------------------------------------------------------------------
 def main():
+    global _artist_keywords_combined
+    # Refresh Last.fm top-artists cache if configured, then build combined artist list for matching.
+    refresh_lastfm_cache_if_needed()
+    _artist_keywords_combined = build_combined_artist_keywords()
+    if LASTFM_API_KEY and _artist_keywords_combined != ARTIST_KEYWORDS:
+        print(f"Artist keywords: {len(ARTIST_KEYWORDS)} static + Last.fm = {len(_artist_keywords_combined)} total.")
+
     client_id = os.environ.get("SPOTIFY_CLIENT_ID", "")
     client_secret = os.environ.get("SPOTIFY_CLIENT_SECRET", "")
     use_spotify = bool(client_id and client_secret)

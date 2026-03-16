@@ -21,6 +21,9 @@ Add these in the Railway dashboard under your service **Variables**. If you use 
 | `CO_OCCURRENCE_ONLY`     | No       | `0`                    | Set `1` to keep only URLs with both a brand and an artist. Default: 0.                          |
 | `SPOTIFY_CLIENT_ID`      | No       | —                      | Spotify API client ID (artist popularity).                                                      |
 | `SPOTIFY_CLIENT_SECRET`  | No       | —                      | Spotify API client secret.                                                                      |
+| `LASTFM_API_KEY`        | No       | *(from last.fm/api)*   | Last.fm API key. If set, top artists from Last.fm are merged with static artist keywords for matching. Cache refreshes every `LASTFM_CACHE_HOURS` (default 24). |
+| `LASTFM_TOP_ARTISTS_LIMIT` | No    | `200`                  | Max number of top artists to fetch from Last.fm (default 200).                                    |
+| `LASTFM_CACHE_HOURS`    | No       | `24`                   | Hours after which Last.fm cache is refreshed (default 24).                                      |
 | `PHISHTANK_APP_KEY`      | No       | —                      | PhishTank app key (registration often disabled).                                                |
 | `MAX_URLS_FROM_HISTORY`  | No       | —                      | Cap URLs per run from history (empty = no cap).                                                 |
 | `PROCESS_LAST_DAYS`      | No       | —                      | Only use URLs seen in last N days (empty = all).                                                |
