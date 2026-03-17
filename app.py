@@ -25,6 +25,7 @@ app = Flask(__name__)
 
 # Safe filename: alphanumeric, underscore, hyphen, one dot
 SAFE_FILENAME = re.compile(r"^[a-zA-Z0-9_.-]+$")
+SAFE_ID = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 STATS_FILE = IMAGES_DIR / "stats.json"
 RUN_META_FILE = IMAGES_DIR / "run_meta.json"
@@ -404,7 +405,11 @@ function renderGraph(data){
   const x = nodes.map(n => n.x);
   const y = nodes.map(n => n.y);
   const text = nodes.map(n => (n.degree > 1 ? n.label : ""));
-  const hover = nodes.map(n => `<b>${n.label}</b><br>type: ${n.type}<br>degree: ${n.degree}${n.full_url ? `<br>${n.full_url.slice(0,120)}${n.full_url.length>120?'…':''}`:''}`);
+  const hover = nodes.map(n => {
+    const img = n.image_url ? `<br><img src="${n.image_url}" alt="" style="width:64px;height:64px;object-fit:cover;border-radius:12px;border:1px solid rgba(255,255,255,0.15)"/>` : "";
+    const urlLine = n.full_url ? `<br>${n.full_url.slice(0,120)}${n.full_url.length>120?'…':''}` : "";
+    return `<b>${n.label}</b><br>type: ${n.type}<br>degree: ${n.degree}${img}${urlLine}`;
+  });
   const colors = nodes.map(n => colorForType(n.type));
   const sizes = nodes.map(n => 8 + 2 * Math.min(n.degree || 0, 12));
 
@@ -617,6 +622,7 @@ def graph_data():
                 "domain": data.get("domain", ""),
                 "full_url": data.get("full_url", ""),
                 "popularity": data.get("popularity", 0),
+                "image_url": data.get("image_url", "") or "",
                 "degree": int(deg.get(n, 0)),
                 "x": float(pos[n][0]) if n in pos else 0.0,
                 "y": float(pos[n][1]) if n in pos else 0.0,
@@ -659,6 +665,47 @@ def serve_image(filename):
     if not path.is_file():
         abort(404)
     return send_from_directory(IMAGES_DIR, filename, mimetype="image/png")
+
+
+def _avatar_svg(label: str, kind: str) -> str:
+    """
+    Generate a simple SVG avatar for nodes (no external fetch).
+    We use the node id as the label seed so this is stable across runs.
+    """
+    import hashlib as _hashlib
+    label = (label or "").strip()
+    seed = f"{kind}:{label}".encode("utf-8", errors="replace")
+    h = int.from_bytes(_hashlib.sha256(seed).digest()[:3], "big")
+    hue = h % 360
+    bg = f"hsl({hue} 60% 45%)"
+    fg = "rgba(255,255,255,0.92)"
+    initials = "".join([c for c in label.upper() if c.isalnum()])[:2] or kind[:2].upper()
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96" role="img" aria-label="{kind} {label}">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="{bg}" stop-opacity="1"/>
+      <stop offset="100%" stop-color="black" stop-opacity="0.18"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="96" height="96" rx="18" fill="url(#g)"/>
+  <text x="48" y="56" text-anchor="middle" font-family="system-ui,Segoe UI,Arial" font-size="34" fill="{fg}" font-weight="700">{initials}</text>
+</svg>"""
+
+
+@app.route("/avatar/<kind>/<node_id>.svg")
+def avatar(kind, node_id):
+    """Serve generated SVG avatars for nodes (brand/artist/domain/url)."""
+    kind = (kind or "").strip().lower()
+    if kind not in ("brand", "artist", "domain", "url"):
+        abort(404)
+    if not SAFE_ID.match(node_id or ""):
+        abort(404)
+    svg = _avatar_svg(node_id.replace("_", " ")[:24], kind)
+    return svg, 200, {
+        "Content-Type": "image/svg+xml; charset=utf-8",
+        "Cache-Control": "public, max-age=86400",
+    }
 
 
 def startup_pipeline_once():

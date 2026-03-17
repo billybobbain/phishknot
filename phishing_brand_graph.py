@@ -957,10 +957,17 @@ def spotify_search_artist(token, artist_name):
     if not items:
         return None
     artist = items[0]
+    images = artist.get("images") if isinstance(artist, dict) else None
+    image_url = ""
+    if isinstance(images, list) and images:
+        first = images[0]
+        if isinstance(first, dict):
+            image_url = first.get("url") or ""
     return {
         "id": artist["id"],
         "name": artist["name"],
         "popularity": artist.get("popularity", 0),
+        "image_url": image_url,
     }
 
 
@@ -982,6 +989,7 @@ def get_artist_popularity(client_id, client_secret, artist_name, cache):
         "name": result["name"],
         "popularity": result["popularity"],
         "spotify_id": result["id"],
+        "image_url": result.get("image_url") or "",
     }
     cache[key] = out
     return out
@@ -1034,7 +1042,7 @@ def build_graph(results):
     results: list of dicts, each:
       url, domain, brands (set), artists (list of dict), optional evidence (url_parse | page_content)
     Uses string-safe node IDs for GEXF; stores type, label (short for visualization), full_url,
-    domain, title, popularity on nodes; relationship type and evidence source on edges.
+    domain, title, popularity, image_url on nodes; relationship type and evidence source on edges.
     """
     G = nx.DiGraph()
     node_ids = {}  # (kind, key) -> safe_id
@@ -1097,6 +1105,8 @@ def build_graph(results):
                 domain="",
                 title=b,
                 popularity=0,
+                # Safe avatar generated/served by the web app (no external fetch).
+                image_url=f"/avatar/brand/{b_id}.svg",
             )
             G.add_edge(b_id, u_id, relationship_type="brand_referenced", evidence_source=evidence)
         artists_this_page = []
@@ -1107,6 +1117,7 @@ def build_graph(results):
             if not name:
                 continue
             pop = a.get("popularity")
+            img = (a.get("image_url") or "").strip()
             a_id = get_id("artist", name)
             G.add_node(
                 a_id,
@@ -1116,6 +1127,7 @@ def build_graph(results):
                 domain="",
                 title=name,
                 popularity=pop if pop is not None else 0,
+                image_url=img or f"/avatar/artist/{a_id}.svg",
             )
             G.add_edge(a_id, u_id, relationship_type="mentioned_in_lure", evidence_source=evidence)
             artists_this_page.append(a_id)
@@ -1149,7 +1161,7 @@ def export_gexf(G, path):
         else:
             G_export = largest.copy()
         print(f"Graph has {n_nodes} nodes; exporting {G_export.number_of_nodes()} for GEXF (set MAX_GEXF_NODES=None for full).")
-    node_attrs = ("type", "label", "full_url", "domain", "title", "popularity")
+    node_attrs = ("type", "label", "full_url", "domain", "title", "popularity", "image_url")
     for n, data in list(G_export.nodes(data=True)):
         for attr in node_attrs:
             val = data.get(attr)
@@ -1688,6 +1700,7 @@ def main():
                         "artist_keyword": (a.get("artist_keyword") or "").strip(),
                         "popularity": a.get("popularity"),
                         "spotify_id": a.get("spotify_id"),
+                        "image_url": (a.get("image_url") or "").strip(),
                     }
                     for a in (r.get("artists") or [])
                     if isinstance(a, dict)
