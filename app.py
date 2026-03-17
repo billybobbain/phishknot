@@ -667,14 +667,23 @@ def graph_data():
         nodes = []
         for n in H.nodes():
             data = H.nodes[n] or {}
+            n_type = data.get("type", "") or ""
+            img = data.get("image_url", "") or ""
+            # Backward-compat: older GEXF may not include image_url yet.
+            # Provide safe local avatars based on node type and id so images show immediately.
+            if not img:
+                if n_type == "brand":
+                    img = f"/avatar/brand/{str(n)}.svg"
+                elif n_type == "artist":
+                    img = f"/avatar/artist/{str(n)}.svg"
             nodes.append({
                 "id": str(n),
                 "label": (data.get("label") or data.get("type") or str(n)),
-                "type": data.get("type", ""),
+                "type": n_type,
                 "domain": data.get("domain", ""),
                 "full_url": data.get("full_url", ""),
                 "popularity": data.get("popularity", 0),
-                "image_url": data.get("image_url", "") or "",
+                "image_url": img,
                 "degree": int(deg.get(n, 0)),
                 "x": float(pos[n][0]) if n in pos else 0.0,
                 "y": float(pos[n][1]) if n in pos else 0.0,
