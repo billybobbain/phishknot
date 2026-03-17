@@ -421,6 +421,13 @@ function renderGraph(data){
   const edges = data.edges || [];
 
   const elements = [];
+  const fallbackImage = (node) => {
+    const u = (node.image_url || "").trim();
+    if (u) return u;
+    const t = node.type || "node";
+    const id = node.id || node.label || "n";
+    return `/avatar/${t}/${id}.svg`;
+  };
   for (const n of nodes) {
     elements.push({
       data: {
@@ -428,7 +435,7 @@ function renderGraph(data){
         label: n.label,
         type: n.type,
         degree: n.degree || 0,
-        image_url: n.image_url || "",
+        image_url: fallbackImage(n),
       }
     });
   }
@@ -443,9 +450,6 @@ function renderGraph(data){
     });
   }
 
-  el("graph").innerHTML = "";
-  if (cy) { try { cy.destroy(); } catch (_) {} cy = null; }
-
   const borderColor = (t) => {
     if (t === "brand") return "#2ecc71";
     if (t === "artist") return "#e67e22";
@@ -458,59 +462,70 @@ function renderGraph(data){
     if (t === "domain") return "rgba(155, 89, 182, 0.22)";
     return "rgba(255,255,255,0.10)";
   };
+  const cyStyle = [
+    {
+      selector: "node",
+      style: {
+        "shape": "ellipse",
+        "width": "mapData(degree, 0, 20, 44, 92)",
+        "height": "mapData(degree, 0, 20, 44, 92)",
+        "background-color": (ele) => bgColor(ele.data("type")),
+        "background-image": "data(image_url)",
+        "background-fit": "cover",
+        "background-image-crossorigin": "anonymous",
+        "border-width": 3,
+        "border-color": (ele) => borderColor(ele.data("type")),
+        "label": "data(label)",
+        "color": "rgba(231,236,255,0.92)",
+        "font-size": 12,
+        "text-valign": "bottom",
+        "text-halign": "center",
+        "text-margin-y": 12,
+        "text-wrap": "wrap",
+        "text-max-width": 140,
+        "text-outline-width": 2,
+        "text-outline-color": "#0a0f1f",
+      },
+    },
+    {
+      selector: "edge",
+      style: {
+        "curve-style": "bezier",
+        "width": 1.2,
+        "line-color": "rgba(255,255,255,0.18)",
+        "target-arrow-shape": "triangle",
+        "target-arrow-color": "rgba(255,255,255,0.18)",
+        "arrow-scale": 0.9,
+      },
+    },
+  ];
+  const layoutOpts = {
+    name: "cose",
+    animate: false,
+    fit: true,
+    padding: 40,
+    nodeRepulsion: 9000,
+    idealEdgeLength: 140,
+    edgeElasticity: 0.2,
+    gravity: 0.25,
+    numIter: 600,
+  };
 
+  if (cy) {
+    cy.batch(() => {
+      cy.elements().remove();
+      cy.add(elements);
+    });
+    cy.layout(layoutOpts).run();
+    return;
+  }
+
+  el("graph").innerHTML = "";
   cy = cytoscape({
     container: el("graph"),
     elements,
-    style: [
-      {
-        selector: "node",
-        style: {
-          "shape": "ellipse",
-          "width": "mapData(degree, 0, 20, 44, 92)",
-          "height": "mapData(degree, 0, 20, 44, 92)",
-          "background-color": (ele) => bgColor(ele.data("type")),
-          "background-image": "data(image_url)",
-          "background-fit": "cover",
-          "background-image-crossorigin": "anonymous",
-          "border-width": 3,
-          "border-color": (ele) => borderColor(ele.data("type")),
-          "label": "data(label)",
-          "color": "rgba(231,236,255,0.92)",
-          "font-size": 12,
-          "text-valign": "bottom",
-          "text-halign": "center",
-          "text-margin-y": 12,
-          "text-wrap": "wrap",
-          "text-max-width": 140,
-          "text-outline-width": 2,
-          "text-outline-color": "#0a0f1f",
-        },
-      },
-      {
-        selector: "edge",
-        style: {
-          "curve-style": "bezier",
-          "width": 1.2,
-          "line-color": "rgba(255,255,255,0.18)",
-          "target-arrow-shape": "triangle",
-          "target-arrow-color": "rgba(255,255,255,0.18)",
-          "arrow-scale": 0.9,
-        },
-      },
-    ],
-    layout: {
-      name: "cose",
-      animate: false,
-      fit: true,
-      padding: 40,
-      nodeRepulsion: 9000,
-      idealEdgeLength: 140,
-      edgeElasticity: 0.2,
-      gravity: 0.25,
-      numIter: 600,
-    },
-    wheelSensitivity: 0.2,
+    style: cyStyle,
+    layout: layoutOpts,
   });
 }
 
@@ -743,6 +758,9 @@ def graph_data():
                     # Prefer Spotify cached image for this label when available (safe source, no phishing fetch).
                     s_img = _spotify_image_for_label(spotify_cache, label)
                     img = s_img or f"/avatar/artist/{str(n)}.svg"
+                else:
+                    # domain, url, or other: use type-based avatar so Cytoscape never gets empty background-image.
+                    img = f"/avatar/{n_type or 'node'}/{str(n)}.svg"
             nodes.append({
                 "id": str(n),
                 "label": label,
