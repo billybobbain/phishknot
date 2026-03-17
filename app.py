@@ -225,6 +225,8 @@ def serve_interactive_graph():
   th, td { border-bottom: 1px solid rgba(255,255,255,0.08); padding: 6px 4px; vertical-align: top; }
   th { color: var(--muted); font-weight: 600; text-align: left; }
   .graph { width: 100%; min-height: calc(100vh - 52px); background: #0a0f1f; }
+  /* Cytoscape container should fill available space */
+  #graph { width: 100%; height: calc(100vh - 52px); }
   .legend { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
   .chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.12); padding: 4px 8px; border-radius: 999px; font-size: 12px; color: var(--muted); }
   .dot { width: 10px; height: 10px; border-radius: 999px; display: inline-block; }
@@ -233,7 +235,7 @@ def serve_interactive_graph():
   .dot.domain { background: var(--domain); }
   .error { color: #ffb3b3; font-size: 13px; }
 </style>
-<script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
+<script src="https://unpkg.com/cytoscape@3.27.0/dist/cytoscape.min.js"></script>
 </head>
 <body>
 <header>
@@ -288,6 +290,12 @@ def serve_interactive_graph():
 
     <h2>Details</h2>
     <details open>
+      <summary>Selected node</summary>
+      <div class="content">
+        <div id="selectedNode" style="color:var(--muted)">Click a node to see details.</div>
+      </div>
+    </details>
+    <details open>
       <summary>Run summary</summary>
       <div class="content">
         <div id="runSummary">Loading…</div>
@@ -316,6 +324,7 @@ def serve_interactive_graph():
 <script>
 const el = (id) => document.getElementById(id);
 const state = { meta: null, data: null };
+let cy = null;
 
 function fmtBool(v){ return v ? "true" : "false"; }
 
@@ -396,75 +405,118 @@ function colorForType(t){
 
 function renderGraph(data){
   if (!data || !data.nodes || data.nodes.length === 0) {
-    Plotly.purge("graph");
+    if (cy) { try { cy.destroy(); } catch (_) {} cy = null; }
     el("graph").innerHTML = "<div style='padding:16px;color:var(--muted)'>No nodes to display for this selection.</div>";
     return;
   }
+
   const nodes = data.nodes;
   const edges = data.edges || [];
-  const x = nodes.map(n => n.x);
-  const y = nodes.map(n => n.y);
-  const text = nodes.map(n => (n.degree > 1 ? n.label : ""));
-  const hover = nodes.map(n => {
-    const img = n.image_url ? `<br><img src="${n.image_url}" alt="" style="width:64px;height:64px;object-fit:cover;border-radius:12px;border:1px solid rgba(255,255,255,0.15)"/>` : "";
-    const urlLine = n.full_url ? `<br>${n.full_url.slice(0,120)}${n.full_url.length>120?'…':''}` : "";
-    return `<b>${n.label}</b><br>type: ${n.type}<br>degree: ${n.degree}${img}${urlLine}`;
-  });
-  const colors = nodes.map(n => colorForType(n.type));
-  const sizes = nodes.map(n => 8 + 2 * Math.min(n.degree || 0, 12));
 
-  // edge segments
-  const pos = new Map(nodes.map(n => [n.id, n]));
-  const ex = [];
-  const ey = [];
+  const elements = [];
+  for (const n of nodes) {
+    elements.push({
+      data: {
+        id: n.id,
+        label: n.label,
+        type: n.type,
+        degree: n.degree || 0,
+        image_url: n.image_url || "",
+      }
+    });
+  }
   for (const e of edges) {
-    const a = pos.get(e.source);
-    const b = pos.get(e.target);
-    if (!a || !b) continue;
-    ex.push(a.x, b.x, null);
-    ey.push(a.y, b.y, null);
+    elements.push({
+      data: {
+        id: `${e.source}__${e.target}`,
+        source: e.source,
+        target: e.target,
+        type: e.type || "unknown",
+      }
+    });
   }
 
-  const edgeTrace = {
-    x: ex, y: ey, mode: "lines",
-    line: { width: 0.7, color: "rgba(255,255,255,0.18)" },
-    hoverinfo: "none",
-    name: ""
+  el("graph").innerHTML = "";
+  if (cy) { try { cy.destroy(); } catch (_) {} cy = null; }
+
+  const borderColor = (t) => {
+    if (t === "brand") return "#2ecc71";
+    if (t === "artist") return "#e67e22";
+    if (t === "domain") return "#9b59b6";
+    return "rgba(255,255,255,0.35)";
   };
-  const nodeTrace = {
-    x, y,
-    mode: "markers+text",
-    text,
-    textposition: "top center",
-    textfont: { size: 12, color: "rgba(231,236,255,0.9)" },
-    marker: { size: sizes, color: colors, line: { width: 0.5, color: "rgba(255,255,255,0.25)" } },
-    hovertext: hover,
-    hoverinfo: "text",
-    name: ""
+  const bgColor = (t) => {
+    if (t === "brand") return "rgba(46, 204, 113, 0.22)";
+    if (t === "artist") return "rgba(230, 126, 34, 0.22)";
+    if (t === "domain") return "rgba(155, 89, 182, 0.22)";
+    return "rgba(255,255,255,0.10)";
   };
-  const layout = {
-    paper_bgcolor: "#0a0f1f",
-    plot_bgcolor: "#0a0f1f",
-    margin: { l: 10, r: 10, t: 30, b: 10 },
-    xaxis: { showgrid: false, zeroline: false, showticklabels: false },
-    yaxis: { showgrid: false, zeroline: false, showticklabels: false },
-    dragmode: "pan",
-    hovermode: "closest",
-    showlegend: false,
-    title: { text: data.title || "Phishing graph", font: { size: 14, color: "rgba(231,236,255,0.9)" } },
-  };
-  Plotly.newPlot("graph", [edgeTrace, nodeTrace], layout, { responsive: true, displayModeBar: true });
+
+  cy = cytoscape({
+    container: el("graph"),
+    elements,
+    style: [
+      {
+        selector: "node",
+        style: {
+          "shape": "ellipse",
+          "width": "mapData(degree, 0, 20, 44, 92)",
+          "height": "mapData(degree, 0, 20, 44, 92)",
+          "background-color": (ele) => bgColor(ele.data("type")),
+          "background-image": "data(image_url)",
+          "background-fit": "cover",
+          "background-image-crossorigin": "anonymous",
+          "border-width": 3,
+          "border-color": (ele) => borderColor(ele.data("type")),
+          "label": "data(label)",
+          "color": "rgba(231,236,255,0.92)",
+          "font-size": 12,
+          "text-valign": "bottom",
+          "text-halign": "center",
+          "text-margin-y": 12,
+          "text-wrap": "wrap",
+          "text-max-width": 140,
+          "text-outline-width": 2,
+          "text-outline-color": "#0a0f1f",
+        },
+      },
+      {
+        selector: "edge",
+        style: {
+          "curve-style": "bezier",
+          "width": 1.2,
+          "line-color": "rgba(255,255,255,0.18)",
+          "target-arrow-shape": "triangle",
+          "target-arrow-color": "rgba(255,255,255,0.18)",
+          "arrow-scale": 0.9,
+        },
+      },
+    ],
+    layout: {
+      name: "cose",
+      animate: false,
+      fit: true,
+      padding: 40,
+      nodeRepulsion: 9000,
+      idealEdgeLength: 140,
+      edgeElasticity: 0.2,
+      gravity: 0.25,
+      numIter: 600,
+    },
+    wheelSensitivity: 0.2,
+  });
 }
 
 function applySearch(){
   const q = (el("searchBox").value || "").trim().toLowerCase();
   if (!q || !state.data || !state.data.nodes) return;
-  const nodes = state.data.nodes;
-  const idx = nodes.findIndex(n => (n.label || "").toLowerCase().includes(q));
-  if (idx < 0) return;
-  // Emphasize found node by increasing marker size in-place and re-render.
-  nodes[idx].degree = Math.max(nodes[idx].degree || 0, 25);
-  renderGraph(state.data);
+  if (!cy) return;
+  const hits = cy.nodes().filter(n => (n.data("label") || "").toLowerCase().includes(q));
+  if (hits.length === 0) return;
+  cy.nodes().unselect();
+  const n = hits[0];
+  n.select();
+  cy.animate({ center: { eles: n }, zoom: Math.max(cy.zoom(), 1.2) }, { duration: 250 });
 }
 
 async function refreshAll(){
