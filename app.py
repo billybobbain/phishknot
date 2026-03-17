@@ -335,9 +335,14 @@ function setError(msg){
 }
 
 function buildQuery(){
-  const co = el("coToggle").value;
-  const view = el("viewMode").value;
-  const maxNodes = Math.max(10, parseInt(el("maxNodes").value || "200", 10));
+  const coEl = el("coToggle");
+  const viewEl = el("viewMode");
+  const maxNodesEl = el("maxNodes");
+  // Defensive defaults so UI doesn't crash if an element is missing.
+  const co = coEl ? coEl.value : "0";
+  const view = viewEl ? viewEl.value : "brand_artist";
+  const maxNodesRaw = maxNodesEl ? maxNodesEl.value : "200";
+  const maxNodes = Math.max(10, parseInt(maxNodesRaw || "200", 10));
   const params = new URLSearchParams({ co, view, max_nodes: String(maxNodes) });
   return params.toString();
 }
@@ -540,11 +545,16 @@ async function refreshAll(){
   }
 }
 
-el("refreshBtn").addEventListener("click", refreshAll);
-el("coToggle").addEventListener("change", refreshAll);
-el("viewMode").addEventListener("change", refreshAll);
-el("maxNodes").addEventListener("change", refreshAll);
-el("searchBox").addEventListener("keydown", (ev) => { if (ev.key === "Enter") applySearch(); });
+const refreshBtn = el("refreshBtn");
+if (refreshBtn) refreshBtn.addEventListener("click", refreshAll);
+const coToggle = el("coToggle");
+if (coToggle) coToggle.addEventListener("change", refreshAll);
+const viewMode = el("viewMode");
+if (viewMode) viewMode.addEventListener("change", refreshAll);
+const maxNodesEl = el("maxNodes");
+if (maxNodesEl) maxNodesEl.addEventListener("change", refreshAll);
+const searchBox = el("searchBox");
+if (searchBox) searchBox.addEventListener("keydown", (ev) => { if (ev.key === "Enter") applySearch(); });
 
 refreshAll();
 </script>
