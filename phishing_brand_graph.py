@@ -54,6 +54,9 @@ HISTORY_DB = _OUTPUT_BASE / "url_history.db"
 CO_OCCURRENCE_GEXF = _OUTPUT_BASE / "co_occurrence.gexf"
 CO_OCCURRENCE_CSV = _OUTPUT_BASE / "co_occurrence_urls.csv"
 OUTPUT_IMAGES_DIR = _OUTPUT_BASE / "output"  # Rendered graph PNGs (latest.png, graph_*.png)
+RUN_META_JSON = OUTPUT_IMAGES_DIR / "run_meta.json"
+KEYWORDS_JSON = OUTPUT_IMAGES_DIR / "keywords.json"
+MATCHES_JSON = OUTPUT_IMAGES_DIR / "matches.json"
 
 MAX_GEXF_NODES = 2000   # Cap nodes in GEXF so Gephi can layout; None = export full graph.
 MAX_URLS = 50
@@ -865,6 +868,45 @@ def find_artists_in_url(url):
     text = _text_chunks_from_url(url)
     return find_artists_in_text(text)
 
+def _sha256_list(values):
+    try:
+        s = "\n".join(str(v) for v in values)
+        return hashlib.sha256(s.encode("utf-8", errors="replace")).hexdigest()
+    except Exception:
+        return ""
+
+
+def _write_json(path, data):
+    try:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=0)
+    except Exception:
+        pass
+
+
+def _compute_match_details(url, text=None):
+    """
+    Return per-source match provenance for a URL.
+    - url matches are derived from parsed URL chunks
+    - text matches are derived from visible page text (if provided)
+    """
+    url_text = _text_chunks_from_url(url)
+    brands_in_url = find_brands_in_text(url_text)
+    artists_in_url = find_artists_in_text(url_text)
+    brands_in_text = set()
+    artists_in_text = set()
+    if text:
+        brands_in_text = find_brands_in_text(text)
+        artists_in_text = find_artists_in_text(text)
+    return {
+        "brands_in_url": sorted(brands_in_url),
+        "artists_in_url": sorted(artists_in_url),
+        "brands_in_text": sorted(brands_in_text),
+        "artists_in_text": sorted(artists_in_text),
+    }
+
 
 # -----------------------------------------------------------------------------
 # Spotify API (requests only, no spotipy)
@@ -1459,9 +1501,24 @@ def main():
 
     spotify_cache = load_spotify_cache()
     results = []
+    run_started = datetime.now(timezone.utc)
+    counts = {
+        "urls_total_candidate": 0,
+        "urls_processed": 0,
+        "download_failed": 0,
+        "kept_any_match": 0,
+        "kept_brand": 0,
+        "kept_artist": 0,
+        "kept_both": 0,
+        "dropped_no_brand_no_artist": 0,
+        "dropped_no_brand": 0,
+        "dropped_no_artist": 0,
+    }
 
     to_process = urls if NO_DOWNLOAD else urls[:MAX_URLS]
     n_total = len(to_process)
+    counts["urls_total_candidate"] = len(urls)
+    counts["urls_processed"] = n_total
     step = 10 if n_total > 50 else 1
     for i, url in enumerate(to_process):
         if i == 0 or (i + 1) % step == 0 or i == n_total - 1:
@@ -1469,8 +1526,9 @@ def main():
         domain = domain_from_url(url)
         if NO_DOWNLOAD:
             # Never request phishing URLs; detect brands/artists from URL path, query, domain.
-            brands = find_brands_in_url(url)
-            artist_keys = find_artists_in_url(url)
+            match_detail = _compute_match_details(url, text=None)
+            brands = set(match_detail["brands_in_url"])
+            artist_keys = set(match_detail["artists_in_url"])
             artists = []
             for ak in artist_keys:
                 if use_spotify:
@@ -1481,17 +1539,35 @@ def main():
                         artists.append({"artist_keyword": ak, "popularity": None})
                 else:
                     artists.append({"artist_keyword": ak, "popularity": None})
-            results.append({
-                "url": url, "domain": domain, "brands": brands, "artists": artists,
-                "evidence": "url_parse",
-            })
+            has_brand = bool(brands)
+            has_artist = bool(artists)
+            if not has_brand and not has_artist:
+                counts["dropped_no_brand_no_artist"] += 1
+            else:
+                counts["kept_any_match"] += 1
+                if has_brand:
+                    counts["kept_brand"] += 1
+                if has_artist:
+                    counts["kept_artist"] += 1
+                if has_brand and has_artist:
+                    counts["kept_both"] += 1
+                results.append({
+                    "url": url,
+                    "domain": domain,
+                    "brands": brands,
+                    "artists": artists,
+                    "evidence": "url_parse",
+                    "match_detail": match_detail,
+                })
             continue
         ok, html = download_page(url)
         if not ok:
+            counts["download_failed"] += 1
             continue
         text = extract_visible_text(html)
-        brands = find_brands_in_text(text) | find_brands_in_url(url)
-        artist_keys = find_artists_in_text(text) | find_artists_in_url(url)
+        match_detail = _compute_match_details(url, text=text)
+        brands = set(match_detail["brands_in_url"]) | set(match_detail["brands_in_text"])
+        artist_keys = set(match_detail["artists_in_url"]) | set(match_detail["artists_in_text"])
         artists = []
         for ak in artist_keys:
             if use_spotify:
@@ -1502,13 +1578,29 @@ def main():
                     artists.append({"artist_keyword": ak, "popularity": None})
             else:
                 artists.append({"artist_keyword": ak, "popularity": None})
-        if brands or artists:
+        has_brand = bool(brands)
+        has_artist = bool(artists)
+        if not has_brand and not has_artist:
+            counts["dropped_no_brand_no_artist"] += 1
+        else:
+            counts["kept_any_match"] += 1
+            if has_brand:
+                counts["kept_brand"] += 1
+            else:
+                counts["dropped_no_brand"] += 1
+            if has_artist:
+                counts["kept_artist"] += 1
+            else:
+                counts["dropped_no_artist"] += 1
+            if has_brand and has_artist:
+                counts["kept_both"] += 1
             results.append({
                 "url": url,
                 "domain": domain,
                 "brands": brands,
                 "artists": artists,
                 "evidence": "page_content",
+                "match_detail": match_detail,
             })
         time.sleep(REQUEST_DELAY)
 
@@ -1557,6 +1649,94 @@ def main():
         pass
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M")
     render_graph_to_image(G, OUTPUT_IMAGES_DIR / f"graph_{ts}.png")
+
+    # Persist rich metadata for the interactive UI (Option B) to consume.
+    artist_list = _artist_keywords_combined if _artist_keywords_combined is not None else ARTIST_KEYWORDS
+    keywords_payload = {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "brands": {
+            "bank_keywords": BANK_KEYWORDS,
+            "other_brand_keywords": OTHER_BRAND_KEYWORDS,
+            "total": len(BRAND_KEYWORDS),
+            "sha256": _sha256_list(BRAND_KEYWORDS),
+        },
+        "artists": {
+            "static_keywords": ARTIST_KEYWORDS,
+            "combined_keywords": list(artist_list) if isinstance(artist_list, list) else ARTIST_KEYWORDS,
+            "static_count": len(ARTIST_KEYWORDS),
+            "combined_count": len(artist_list) if isinstance(artist_list, list) else len(ARTIST_KEYWORDS),
+            "sha256": _sha256_list(artist_list if isinstance(artist_list, list) else ARTIST_KEYWORDS),
+            "lastfm_enabled": bool(LASTFM_API_KEY),
+            "lastfm_cache_file": str(LASTFM_CACHE_FILE),
+        },
+    }
+    _write_json(KEYWORDS_JSON, keywords_payload)
+
+    # Keep match records fairly small; UI can paginate on client side.
+    matches_payload = {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "note": "Per-URL match provenance. brands/artists may be from url_parse and/or page_content.",
+        "results": [
+            {
+                "url": r.get("url", ""),
+                "domain": r.get("domain", ""),
+                "evidence": r.get("evidence", ""),
+                "brands": sorted(list(r.get("brands") or [])),
+                "artists": [
+                    {
+                        "name": (a.get("name") or "").strip(),
+                        "artist_keyword": (a.get("artist_keyword") or "").strip(),
+                        "popularity": a.get("popularity"),
+                        "spotify_id": a.get("spotify_id"),
+                    }
+                    for a in (r.get("artists") or [])
+                    if isinstance(a, dict)
+                ],
+                "match_detail": r.get("match_detail") or {},
+            }
+            for r in results
+        ],
+    }
+    _write_json(MATCHES_JSON, matches_payload)
+
+    run_meta = {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "run_started_utc": run_started.isoformat().replace("+00:00", "Z"),
+        "config": {
+            "NO_DOWNLOAD": NO_DOWNLOAD,
+            "USE_URL_HISTORY": USE_URL_HISTORY,
+            "PROCESS_LAST_DAYS": PROCESS_LAST_DAYS,
+            "MAX_URLS_FROM_HISTORY": MAX_URLS_FROM_HISTORY,
+            "MAX_URLS": MAX_URLS,
+            "REQUEST_DELAY": REQUEST_DELAY,
+            "CO_OCCURRENCE_ONLY": CO_OCCURRENCE_ONLY,
+            "MAX_IMAGE_NODES": MAX_IMAGE_NODES,
+            "MAX_GEXF_NODES": MAX_GEXF_NODES,
+            "LASTFM_ENABLED": bool(LASTFM_API_KEY),
+            "SPOTIFY_ENABLED": use_spotify,
+        },
+        "counts": counts,
+        "files": {
+            "graph_gexf": str(GRAPH_GEXF.resolve()),
+            "co_occurrence_gexf": str(CO_OCCURRENCE_GEXF.resolve()),
+            "edges_csv": str(EDGES_CSV.resolve()),
+            "url_brands_csv": str(URL_BRANDS_CSV.resolve()),
+            "co_occurrence_urls_csv": str(CO_OCCURRENCE_CSV.resolve()),
+            "latest_png": str((OUTPUT_IMAGES_DIR / "latest.png").resolve()),
+            "stats_json": str((OUTPUT_IMAGES_DIR / "stats.json").resolve()),
+            "run_meta_json": str(RUN_META_JSON.resolve()),
+            "keywords_json": str(KEYWORDS_JSON.resolve()),
+            "matches_json": str(MATCHES_JSON.resolve()),
+        },
+        "graph_stats": {
+            "full_nodes": G.number_of_nodes(),
+            "full_edges": G.number_of_edges(),
+            "display_nodes": H.number_of_nodes(),
+            "display_brands": brands_count,
+            "display_artists": artists_count,
+        },
+    }
+    _write_json(RUN_META_JSON, run_meta)
     # Keep only last 5 timestamped images
     hist = sorted(OUTPUT_IMAGES_DIR.glob("graph_*.png"), key=lambda p: p.stat().st_mtime, reverse=True)
     for old in hist[5:]:

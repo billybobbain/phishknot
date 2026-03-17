@@ -9,7 +9,7 @@ import threading
 import time
 from pathlib import Path
 
-from flask import Flask, send_from_directory, abort, jsonify
+from flask import Flask, send_from_directory, abort, jsonify, request
 
 # Output dir for pipeline and images (must be set before importing phishing_brand_graph in the worker)
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR") or os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", "")
@@ -27,6 +27,9 @@ app = Flask(__name__)
 SAFE_FILENAME = re.compile(r"^[a-zA-Z0-9_.-]+$")
 
 STATS_FILE = IMAGES_DIR / "stats.json"
+RUN_META_FILE = IMAGES_DIR / "run_meta.json"
+KEYWORDS_FILE = IMAGES_DIR / "keywords.json"
+MATCHES_FILE = IMAGES_DIR / "matches.json"
 
 
 def _read_stats():
@@ -35,6 +38,16 @@ def _read_stats():
         return None
     try:
         with open(STATS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _read_json_file(path: Path):
+    if not path.is_file():
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception:
         return None
@@ -152,31 +165,489 @@ def serve_graph_embed():
 
 @app.route("/graph/interactive")
 def serve_interactive_graph():
-    """Serve a responsive wrapper page that embeds the interactive graph (mobile-friendly)."""
-    path = IMAGES_DIR / "graph_interactive.html"
-    if not path.is_file():
-        abort(404)
-    wrapper = """<!DOCTYPE html>
+    """
+    Option B: Serve a real interactive UI page (no iframe).
+    Graph data and detailed run metadata are fetched from /graph/meta and /graph/data.
+    """
+    ui = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Phishing graph (interactive)</title>
 <style>
-body { margin: 0; padding: 0; height: 100vh; display: flex; flex-direction: column; }
-header { flex: 0 0 auto; padding: 0.5rem 1rem; background: #f5f5f5; border-bottom: 1px solid #ddd; font-family: system-ui, sans-serif; font-size: 0.9rem; }
-header a { color: #0066cc; text-decoration: none; min-height: 44px; line-height: 44px; display: inline-block; }
-header a:hover { text-decoration: underline; }
-.graph-container { flex: 1 1 auto; min-height: 0; width: 100%; }
-.graph-container iframe { width: 100%; height: 100%; border: none; display: block; }
+  :root {
+    --bg: #0b1020;
+    --panel: #111a33;
+    --panel2: #0e1730;
+    --text: #e7ecff;
+    --muted: #aab4de;
+    --border: rgba(255,255,255,0.12);
+    --accent: #7aa2ff;
+    --brand: #2ecc71;
+    --artist: #e67e22;
+    --domain: #9b59b6;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 0; min-height: 100vh; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  header { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 12px; padding: 10px 12px; background: rgba(17,26,51,0.92); backdrop-filter: blur(10px); border-bottom: 1px solid var(--border); }
+  header .left { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }
+  header .right { display: flex; align-items: center; gap: 10px; }
+  .pill { border: 1px solid var(--border); background: rgba(0,0,0,0.15); padding: 6px 10px; border-radius: 999px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .btn { cursor: pointer; border: 1px solid var(--border); background: rgba(255,255,255,0.06); color: var(--text); padding: 8px 10px; border-radius: 10px; font-size: 13px; }
+  .btn:hover { background: rgba(255,255,255,0.09); }
+  .layout { display: grid; grid-template-columns: 360px 1fr; min-height: calc(100vh - 52px); }
+  @media (max-width: 980px) { .layout { grid-template-columns: 1fr; } }
+  .panel { border-right: 1px solid var(--border); background: var(--panel); padding: 12px; overflow: auto; }
+  @media (max-width: 980px) { .panel { border-right: none; border-bottom: 1px solid var(--border); } }
+  .panel h2 { margin: 8px 0 10px; font-size: 14px; letter-spacing: 0.02em; color: var(--muted); text-transform: uppercase; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .field { width: 100%; display: grid; grid-template-columns: 140px 1fr; gap: 10px; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
+  .label { color: var(--muted); font-size: 13px; }
+  .value { font-size: 13px; }
+  select, input[type="number"], input[type="text"] {
+    width: 100%;
+    background: var(--panel2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px 10px;
+    font-size: 13px;
+  }
+  details { border: 1px solid rgba(255,255,255,0.10); border-radius: 12px; overflow: hidden; background: rgba(0,0,0,0.14); margin: 10px 0; }
+  summary { cursor: pointer; padding: 10px 12px; color: var(--text); font-size: 13px; }
+  details .content { padding: 10px 12px; border-top: 1px solid rgba(255,255,255,0.10); color: var(--muted); font-size: 12px; }
+  pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { border-bottom: 1px solid rgba(255,255,255,0.08); padding: 6px 4px; vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; text-align: left; }
+  .graph { width: 100%; min-height: calc(100vh - 52px); background: #0a0f1f; }
+  .legend { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.12); padding: 4px 8px; border-radius: 999px; font-size: 12px; color: var(--muted); }
+  .dot { width: 10px; height: 10px; border-radius: 999px; display: inline-block; }
+  .dot.brand { background: var(--brand); }
+  .dot.artist { background: var(--artist); }
+  .dot.domain { background: var(--domain); }
+  .error { color: #ffb3b3; font-size: 13px; }
 </style>
+<script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
 </head>
 <body>
-<header><a href="/">&larr; Back to graph</a></header>
-<div class="graph-container"><iframe src="/graph/embed" title="Interactive phishing graph"></iframe></div>
+<header>
+  <div class="left">
+    <a class="btn" href="/">&larr; Back</a>
+    <div id="status" class="pill">Loading…</div>
+    <div id="summary" class="pill">—</div>
+  </div>
+  <div class="right">
+    <button id="refreshBtn" class="btn" type="button">Refresh</button>
+  </div>
+</header>
+<div class="layout">
+  <div class="panel">
+    <h2>Controls</h2>
+    <div class="field">
+      <div class="label">Dataset</div>
+      <div class="value">
+        <select id="coToggle">
+          <option value="0">All matched URLs (brand OR artist)</option>
+          <option value="1">Co-occurrence only (URLs with BOTH brand + artist)</option>
+        </select>
+      </div>
+    </div>
+    <div class="field">
+      <div class="label">View</div>
+      <div class="value">
+        <select id="viewMode">
+          <option value="brand_artist">Brands + Artists (co-mentioned)</option>
+          <option value="focus">Brands + Artists + Domains</option>
+        </select>
+      </div>
+    </div>
+    <div class="field">
+      <div class="label">Max nodes</div>
+      <div class="value">
+        <input id="maxNodes" type="number" min="10" max="2000" step="10" value="200" />
+      </div>
+    </div>
+    <div class="field">
+      <div class="label">Search</div>
+      <div class="value">
+        <input id="searchBox" type="text" placeholder="Find node label (e.g., ccb / Yeat / domain)" />
+      </div>
+    </div>
+
+    <div class="legend">
+      <span class="chip"><span class="dot brand"></span> brand</span>
+      <span class="chip"><span class="dot artist"></span> artist</span>
+      <span class="chip"><span class="dot domain"></span> domain</span>
+    </div>
+
+    <h2>Details</h2>
+    <details open>
+      <summary>Run summary</summary>
+      <div class="content">
+        <div id="runSummary">Loading…</div>
+      </div>
+    </details>
+    <details>
+      <summary>Effective config</summary>
+      <div class="content"><pre id="configPre"></pre></div>
+    </details>
+    <details>
+      <summary>Keywords (counts + hashes)</summary>
+      <div class="content"><pre id="keywordsPre"></pre></div>
+    </details>
+    <details>
+      <summary>Matches (URLs → brands/artists + provenance)</summary>
+      <div class="content">
+        <div style="margin-bottom:8px;color:var(--muted)">Showing latest run matches. Use browser find to search within.</div>
+        <div id="matchesTableWrap"></div>
+      </div>
+    </details>
+    <div id="error" class="error" style="display:none"></div>
+  </div>
+  <div id="graph" class="graph"></div>
+</div>
+
+<script>
+const el = (id) => document.getElementById(id);
+const state = { meta: null, data: null };
+
+function fmtBool(v){ return v ? "true" : "false"; }
+
+function setError(msg){
+  const e = el("error");
+  e.style.display = msg ? "block" : "none";
+  e.textContent = msg || "";
+}
+
+function buildQuery(){
+  const co = el("coToggle").value;
+  const view = el("viewMode").value;
+  const maxNodes = Math.max(10, parseInt(el("maxNodes").value || "200", 10));
+  const params = new URLSearchParams({ co, view, max_nodes: String(maxNodes) });
+  return params.toString();
+}
+
+async function fetchJSON(url){
+  const r = await fetch(url, { cache: "no-store" });
+  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  return await r.json();
+}
+
+function renderMeta(meta){
+  el("status").textContent = `Updated: ${meta.generated_at_utc || "unknown"}`;
+  const rs = meta.run_stats || {};
+  const ds = meta.display_stats || {};
+  el("summary").textContent =
+    `Display ${ds.display_nodes ?? "?"} nodes • Full ${rs.full_nodes ?? "?"} nodes / ${rs.full_edges ?? "?"} edges`;
+
+  el("runSummary").innerHTML = `
+    <div><b>Dataset</b>: ${meta.dataset_label || "—"}</div>
+    <div><b>URLs processed</b>: ${meta.counts?.urls_processed ?? "?"} (download_failed=${meta.counts?.download_failed ?? "0"})</div>
+    <div><b>Kept</b>: any_match=${meta.counts?.kept_any_match ?? "?"}, brand=${meta.counts?.kept_brand ?? "?"}, artist=${meta.counts?.kept_artist ?? "?"}, both=${meta.counts?.kept_both ?? "?"}</div>
+    <div><b>Mode</b>: NO_DOWNLOAD=${fmtBool(meta.config?.NO_DOWNLOAD)}, CO_OCCURRENCE_ONLY(env)=${fmtBool(meta.config?.CO_OCCURRENCE_ONLY)}</div>
+  `;
+  el("configPre").textContent = JSON.stringify(meta.config || {}, null, 2);
+  el("keywordsPre").textContent = JSON.stringify(meta.keywords || {}, null, 2);
+}
+
+function renderMatches(matches){
+  if (!matches || !Array.isArray(matches.results)) {
+    el("matchesTableWrap").innerHTML = "<div style='color:var(--muted)'>No match data available.</div>";
+    return;
+  }
+  const rows = matches.results.slice(0, 250);
+  const html = [];
+  html.push("<table>");
+  html.push("<thead><tr><th>Domain</th><th>Brands</th><th>Artists</th><th>Provenance</th><th>URL</th></tr></thead><tbody>");
+  for (const r of rows) {
+    const brands = (r.brands || []).join(", ");
+    const artists = (r.artists || []).map(a => a.name || a.artist_keyword).filter(Boolean).join(", ");
+    const md = r.match_detail || {};
+    const prov = [
+      (md.brands_in_url?.length ? `brands:url(${md.brands_in_url.length})` : ""),
+      (md.brands_in_text?.length ? `brands:text(${md.brands_in_text.length})` : ""),
+      (md.artists_in_url?.length ? `artists:url(${md.artists_in_url.length})` : ""),
+      (md.artists_in_text?.length ? `artists:text(${md.artists_in_text.length})` : ""),
+    ].filter(Boolean).join(" • ");
+    html.push("<tr>");
+    html.push(`<td>${(r.domain || "").slice(0, 50)}</td>`);
+    html.push(`<td>${brands ? brands.slice(0, 120) : ""}</td>`);
+    html.push(`<td>${artists ? artists.slice(0, 120) : ""}</td>`);
+    html.push(`<td>${prov}</td>`);
+    html.push(`<td><a href="${r.url}" target="_blank" rel="noreferrer">${(r.url || "").slice(0, 80)}</a></td>`);
+    html.push("</tr>");
+  }
+  html.push("</tbody></table>");
+  el("matchesTableWrap").innerHTML = html.join("");
+}
+
+function colorForType(t){
+  if (t === "brand") return "#2ecc71";
+  if (t === "artist") return "#e67e22";
+  if (t === "domain") return "#9b59b6";
+  return "#95a5a6";
+}
+
+function renderGraph(data){
+  if (!data || !data.nodes || data.nodes.length === 0) {
+    Plotly.purge("graph");
+    el("graph").innerHTML = "<div style='padding:16px;color:var(--muted)'>No nodes to display for this selection.</div>";
+    return;
+  }
+  const nodes = data.nodes;
+  const edges = data.edges || [];
+  const x = nodes.map(n => n.x);
+  const y = nodes.map(n => n.y);
+  const text = nodes.map(n => (n.degree > 1 ? n.label : ""));
+  const hover = nodes.map(n => `<b>${n.label}</b><br>type: ${n.type}<br>degree: ${n.degree}${n.full_url ? `<br>${n.full_url.slice(0,120)}${n.full_url.length>120?'…':''}`:''}`);
+  const colors = nodes.map(n => colorForType(n.type));
+  const sizes = nodes.map(n => 8 + 2 * Math.min(n.degree || 0, 12));
+
+  // edge segments
+  const pos = new Map(nodes.map(n => [n.id, n]));
+  const ex = [];
+  const ey = [];
+  for (const e of edges) {
+    const a = pos.get(e.source);
+    const b = pos.get(e.target);
+    if (!a || !b) continue;
+    ex.push(a.x, b.x, null);
+    ey.push(a.y, b.y, null);
+  }
+
+  const edgeTrace = {
+    x: ex, y: ey, mode: "lines",
+    line: { width: 0.7, color: "rgba(255,255,255,0.18)" },
+    hoverinfo: "none",
+    name: ""
+  };
+  const nodeTrace = {
+    x, y,
+    mode: "markers+text",
+    text,
+    textposition: "top center",
+    textfont: { size: 12, color: "rgba(231,236,255,0.9)" },
+    marker: { size: sizes, color: colors, line: { width: 0.5, color: "rgba(255,255,255,0.25)" } },
+    hovertext: hover,
+    hoverinfo: "text",
+    name: ""
+  };
+  const layout = {
+    paper_bgcolor: "#0a0f1f",
+    plot_bgcolor: "#0a0f1f",
+    margin: { l: 10, r: 10, t: 30, b: 10 },
+    xaxis: { showgrid: false, zeroline: false, showticklabels: false },
+    yaxis: { showgrid: false, zeroline: false, showticklabels: false },
+    dragmode: "pan",
+    hovermode: "closest",
+    showlegend: false,
+    title: { text: data.title || "Phishing graph", font: { size: 14, color: "rgba(231,236,255,0.9)" } },
+  };
+  Plotly.newPlot("graph", [edgeTrace, nodeTrace], layout, { responsive: true, displayModeBar: true });
+}
+
+function applySearch(){
+  const q = (el("searchBox").value || "").trim().toLowerCase();
+  if (!q || !state.data || !state.data.nodes) return;
+  const nodes = state.data.nodes;
+  const idx = nodes.findIndex(n => (n.label || "").toLowerCase().includes(q));
+  if (idx < 0) return;
+  // Emphasize found node by increasing marker size in-place and re-render.
+  nodes[idx].degree = Math.max(nodes[idx].degree || 0, 25);
+  renderGraph(state.data);
+}
+
+async function refreshAll(){
+  try {
+    setError("");
+    el("status").textContent = "Loading…";
+    const q = buildQuery();
+    const meta = await fetchJSON(`/graph/meta?${q}`);
+    const data = await fetchJSON(`/graph/data?${q}`);
+    const matches = await fetchJSON(`/graph/matches?${q}`);
+    state.meta = meta;
+    state.data = data;
+    renderMeta(meta);
+    renderMatches(matches);
+    renderGraph(data);
+  } catch (e) {
+    setError(`Failed to load graph data: ${e.message}`);
+    el("status").textContent = "Error";
+  }
+}
+
+el("refreshBtn").addEventListener("click", refreshAll);
+el("coToggle").addEventListener("change", refreshAll);
+el("viewMode").addEventListener("change", refreshAll);
+el("maxNodes").addEventListener("change", refreshAll);
+el("searchBox").addEventListener("keydown", (ev) => { if (ev.key === "Enter") applySearch(); });
+
+refreshAll();
+</script>
 </body>
 </html>"""
-    return wrapper, 200, {"Content-Type": "text/html; charset=utf-8"}
+    return ui, 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
+def _load_graph_from_gexf(path: Path):
+    try:
+        import networkx as nx
+        if not path.is_file():
+            return None
+        return nx.read_gexf(str(path))
+    except Exception:
+        return None
+
+
+def _pick_dataset_gexf(co: bool):
+    # Prefer co_occurrence.gexf when requested; fall back to phishing_graph.gexf.
+    co_path = DATA_DIR / "co_occurrence.gexf"
+    full_path = DATA_DIR / "phishing_graph.gexf"
+    if co and co_path.is_file():
+        return co_path
+    return full_path
+
+
+@app.route("/graph/meta")
+def graph_meta():
+    """
+    Metadata for the interactive UI:
+    - effective config and counts (from output/run_meta.json)
+    - keyword summaries (from output/keywords.json)
+    - last run stats (from output/stats.json)
+    """
+    co = (request.args.get("co", "0") or "0").lower() in ("1", "true", "yes")
+    view = (request.args.get("view", "brand_artist") or "brand_artist").strip()
+    max_nodes = request.args.get("max_nodes", None)
+
+    run_meta = _read_json_file(RUN_META_FILE) or {}
+    keywords = _read_json_file(KEYWORDS_FILE) or {}
+    stats = _read_stats() or {}
+
+    out = {
+        "generated_at_utc": run_meta.get("generated_at_utc") or keywords.get("generated_at_utc") or "",
+        "dataset_label": "Co-occurrence only (brand+artist URLs)" if co else "All matched URLs (brand OR artist)",
+        "requested": {"co": co, "view": view, "max_nodes": max_nodes},
+        "config": run_meta.get("config") or {},
+        "counts": run_meta.get("counts") or {},
+        "run_stats": run_meta.get("graph_stats") or {},
+        "display_stats": stats or {},
+        "keywords": {
+            "brands": {
+                "total": (keywords.get("brands") or {}).get("total"),
+                "sha256": (keywords.get("brands") or {}).get("sha256"),
+                "bank_count": len((keywords.get("brands") or {}).get("bank_keywords") or []),
+                "other_count": len((keywords.get("brands") or {}).get("other_brand_keywords") or []),
+            },
+            "artists": {
+                "static_count": (keywords.get("artists") or {}).get("static_count"),
+                "combined_count": (keywords.get("artists") or {}).get("combined_count"),
+                "sha256": (keywords.get("artists") or {}).get("sha256"),
+                "lastfm_enabled": (keywords.get("artists") or {}).get("lastfm_enabled"),
+            },
+            "note": "Full keyword lists are stored in output/keywords.json (not fully inlined here).",
+        },
+    }
+    return jsonify(out)
+
+
+@app.route("/graph/matches")
+def graph_matches():
+    """Return per-URL match provenance from the latest run (output/matches.json)."""
+    matches = _read_json_file(MATCHES_FILE) or {"results": []}
+    return jsonify(matches)
+
+
+@app.route("/graph/data")
+def graph_data():
+    """
+    Return node/edge lists (with x/y positions) for client-side Plotly rendering.
+    Query params:
+      - co=0|1: choose dataset (phishing_graph.gexf vs co_occurrence.gexf when available)
+      - view=brand_artist|focus
+      - max_nodes=int
+    """
+    co = (request.args.get("co", "0") or "0").lower() in ("1", "true", "yes")
+    view = (request.args.get("view", "brand_artist") or "brand_artist").strip()
+    try:
+        max_nodes = int(request.args.get("max_nodes", "200"))
+    except Exception:
+        max_nodes = 200
+    max_nodes = max(10, min(max_nodes, 5000))
+
+    gexf_path = _pick_dataset_gexf(co)
+    G = _load_graph_from_gexf(gexf_path)
+    if G is None:
+        return jsonify({"title": "Phishing graph", "nodes": [], "edges": [], "note": "No graph available yet."})
+
+    try:
+        import networkx as nx
+        # Reuse existing subgraph helpers from the pipeline module.
+        from phishing_brand_graph import _brand_artist_subgraph, _focus_subgraph, _subgraph_for_display
+
+        if view == "focus":
+            H = _focus_subgraph(G)
+            H = _subgraph_for_display(H, max_nodes)
+            title = "Phishing graph (brands + artists + domains)"
+        else:
+            H = _brand_artist_subgraph(G, max_nodes=max_nodes)
+            title = "Phishing graph (brands + artists, co-mentioned)"
+
+        if H.number_of_nodes() == 0:
+            return jsonify({"title": title, "nodes": [], "edges": []})
+
+        try:
+            pos = nx.spring_layout(H, k=1.8, seed=42, iterations=50)
+        except Exception:
+            pos = nx.random_layout(H, seed=42)
+
+        deg = dict(H.degree())
+        nodes = []
+        for n in H.nodes():
+            data = H.nodes[n] or {}
+            nodes.append({
+                "id": str(n),
+                "label": (data.get("label") or data.get("type") or str(n)),
+                "type": data.get("type", ""),
+                "domain": data.get("domain", ""),
+                "full_url": data.get("full_url", ""),
+                "popularity": data.get("popularity", 0),
+                "degree": int(deg.get(n, 0)),
+                "x": float(pos[n][0]) if n in pos else 0.0,
+                "y": float(pos[n][1]) if n in pos else 0.0,
+            })
+
+        edges = []
+        for u, v, data in H.edges(data=True):
+            edges.append({
+                "source": str(u),
+                "target": str(v),
+                "type": (data or {}).get("relationship_type", "unknown"),
+                "evidence": (data or {}).get("evidence_source", ""),
+            })
+
+        return jsonify({
+            "title": title,
+            "dataset": "co_occurrence" if co else "all",
+            "view": view,
+            "max_nodes": max_nodes,
+            "nodes": nodes,
+            "edges": edges,
+            "stats": {
+                "nodes": H.number_of_nodes(),
+                "edges": H.number_of_edges(),
+                "brands": sum(1 for x in H.nodes() if (H.nodes[x] or {}).get("type") == "brand"),
+                "artists": sum(1 for x in H.nodes() if (H.nodes[x] or {}).get("type") == "artist"),
+                "domains": sum(1 for x in H.nodes() if (H.nodes[x] or {}).get("type") == "domain"),
+            },
+        })
+    except Exception as e:
+        return jsonify({"title": "Phishing graph", "nodes": [], "edges": [], "error": str(e)})
 
 
 @app.route("/images/<filename>")
