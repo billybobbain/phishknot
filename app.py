@@ -276,6 +276,20 @@ def serve_interactive_graph():
       </div>
     </div>
     <div class="field">
+      <div class="label">Layout</div>
+      <div class="value">
+        <select id="layoutMode">
+          <option value="cose">CoSE (force-directed)</option>
+          <option value="circle">Circle</option>
+          <option value="concentric">Concentric</option>
+          <option value="grid">Grid</option>
+          <option value="breadthfirst">Breadthfirst</option>
+          <option value="random">Random</option>
+          <option value="preset">Preset (server positions)</option>
+        </select>
+      </div>
+    </div>
+    <div class="field">
       <div class="label">Search</div>
       <div class="value">
         <input id="searchBox" type="text" placeholder="Find node label (e.g., ccb / Yeat / domain)" />
@@ -410,6 +424,22 @@ function colorForType(t){
   return "#95a5a6";
 }
 
+function getLayoutOpts(){
+  const layoutEl = el("layoutMode");
+  const name = (layoutEl && layoutEl.value) ? layoutEl.value : "cose";
+  const base = { animate: false, fit: true, padding: 40 };
+  if (name === "cose") {
+    return { ...base, name: "cose", nodeRepulsion: 9000, idealEdgeLength: 140, edgeElasticity: 0.2, gravity: 0.25, numIter: 600 };
+  }
+  if (name === "concentric") {
+    return { ...base, name: "concentric", concentric: (node) => node.degree(), levelWidth: () => 1 };
+  }
+  if (name === "breadthfirst") {
+    return { ...base, name: "breadthfirst", directed: false, spacingFactor: 1.2 };
+  }
+  return { ...base, name };
+}
+
 function renderGraph(data){
   if (!data || !data.nodes || data.nodes.length === 0) {
     if (cy) { try { cy.destroy(); } catch (_) {} cy = null; }
@@ -429,15 +459,17 @@ function renderGraph(data){
     return `/avatar/${t}/${id}.svg`;
   };
   for (const n of nodes) {
-    elements.push({
-      data: {
-        id: n.id,
-        label: n.label,
-        type: n.type,
-        degree: n.degree || 0,
-        image_url: fallbackImage(n),
-      }
-    });
+    const data = {
+      id: n.id,
+      label: n.label,
+      type: n.type,
+      degree: n.degree || 0,
+      image_url: fallbackImage(n),
+    };
+    if (n.x != null && n.y != null && Number.isFinite(n.x) && Number.isFinite(n.y)) {
+      data.position = { x: n.x, y: n.y };
+    }
+    elements.push({ data });
   }
   for (const e of edges) {
     elements.push({
@@ -499,17 +531,7 @@ function renderGraph(data){
       },
     },
   ];
-  const layoutOpts = {
-    name: "cose",
-    animate: false,
-    fit: true,
-    padding: 40,
-    nodeRepulsion: 9000,
-    idealEdgeLength: 140,
-    edgeElasticity: 0.2,
-    gravity: 0.25,
-    numIter: 600,
-  };
+  const layoutOpts = getLayoutOpts();
 
   if (cy) {
     cy.batch(() => {
@@ -568,6 +590,10 @@ const viewMode = el("viewMode");
 if (viewMode) viewMode.addEventListener("change", refreshAll);
 const maxNodesEl = el("maxNodes");
 if (maxNodesEl) maxNodesEl.addEventListener("change", refreshAll);
+const layoutMode = el("layoutMode");
+if (layoutMode) layoutMode.addEventListener("change", () => {
+  if (cy && cy.elements().length > 0) cy.layout(getLayoutOpts()).run();
+});
 const searchBox = el("searchBox");
 if (searchBox) searchBox.addEventListener("keydown", (ev) => { if (ev.key === "Enter") applySearch(); });
 
