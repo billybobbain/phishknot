@@ -352,6 +352,7 @@ function renderMeta(meta){
   el("status").textContent = `Updated: ${meta.generated_at_utc || "unknown"}`;
   const rs = meta.run_stats || {};
   const ds = meta.display_stats || {};
+  const img = meta.image_summary || {};
   el("summary").textContent =
     `Display ${ds.display_nodes ?? "?"} nodes • Full ${rs.full_nodes ?? "?"} nodes / ${rs.full_edges ?? "?"} edges`;
 
@@ -360,6 +361,7 @@ function renderMeta(meta){
     <div><b>URLs processed</b>: ${meta.counts?.urls_processed ?? "?"} (download_failed=${meta.counts?.download_failed ?? "0"})</div>
     <div><b>Kept</b>: any_match=${meta.counts?.kept_any_match ?? "?"}, brand=${meta.counts?.kept_brand ?? "?"}, artist=${meta.counts?.kept_artist ?? "?"}, both=${meta.counts?.kept_both ?? "?"}</div>
     <div><b>Mode</b>: NO_DOWNLOAD=${fmtBool(meta.config?.NO_DOWNLOAD)}, CO_OCCURRENCE_ONLY(env)=${fmtBool(meta.config?.CO_OCCURRENCE_ONLY)}</div>
+    <div><b>Artist images</b>: spotify=${img.spotify_artist_images ?? "?"} / artists=${img.artists_total ?? "?"} (fallback avatars for the rest)</div>
   `;
   el("configPre").textContent = JSON.stringify(meta.config || {}, null, 2);
   el("keywordsPre").textContent = JSON.stringify(meta.keywords || {}, null, 2);
@@ -570,6 +572,34 @@ def _pick_dataset_gexf(co: bool):
     return full_path
 
 
+def _load_spotify_image_cache():
+    """
+    Load cached Spotify artist lookups written by the pipeline to cache/spotify_artists.json.
+    Schema: { "<lowercase-key>": { name, popularity, spotify_id, image_url } | null, ... }
+    """
+    path = DATA_DIR / "cache" / "spotify_artists.json"
+    if not path.is_file():
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _spotify_image_for_label(cache: dict, label: str) -> str:
+    if not cache:
+        return ""
+    key = (label or "").strip().lower()
+    if not key:
+        return ""
+    entry = cache.get(key)
+    if isinstance(entry, dict):
+        return (entry.get("image_url") or "").strip()
+    return ""
+
+
 @app.route("/graph/meta")
 def graph_meta():
     """
@@ -585,6 +615,25 @@ def graph_meta():
     run_meta = _read_json_file(RUN_META_FILE) or {}
     keywords = _read_json_file(KEYWORDS_FILE) or {}
     stats = _read_stats() or {}
+    spotify_cache = _load_spotify_image_cache()
+    matches = _read_json_file(MATCHES_FILE) or {}
+
+    # Image summary: how many artist nodes have Spotify image URLs available.
+    artist_labels = set()
+    try:
+        for r in (matches.get("results") or []):
+            for a in (r.get("artists") or []):
+                if isinstance(a, dict):
+                    label = (a.get("name") or a.get("artist_keyword") or "").strip()
+                    if label:
+                        artist_labels.add(label)
+    except Exception:
+        artist_labels = set()
+
+    spotify_hits = 0
+    for lbl in artist_labels:
+        if _spotify_image_for_label(spotify_cache, lbl):
+            spotify_hits += 1
 
     out = {
         "generated_at_utc": run_meta.get("generated_at_utc") or keywords.get("generated_at_utc") or "",
@@ -594,6 +643,10 @@ def graph_meta():
         "counts": run_meta.get("counts") or {},
         "run_stats": run_meta.get("graph_stats") or {},
         "display_stats": stats or {},
+        "image_summary": {
+            "artists_total": len(artist_labels),
+            "spotify_artist_images": spotify_hits,
+        },
         "keywords": {
             "brands": {
                 "total": (keywords.get("brands") or {}).get("total"),
@@ -646,6 +699,7 @@ def graph_data():
         import networkx as nx
         # Reuse existing subgraph helpers from the pipeline module.
         from phishing_brand_graph import _brand_artist_subgraph, _focus_subgraph, _subgraph_for_display
+        spotify_cache = _load_spotify_image_cache()
 
         if view == "focus":
             H = _focus_subgraph(G)
@@ -669,16 +723,19 @@ def graph_data():
             data = H.nodes[n] or {}
             n_type = data.get("type", "") or ""
             img = data.get("image_url", "") or ""
+            label = (data.get("label") or data.get("title") or data.get("type") or str(n))
             # Backward-compat: older GEXF may not include image_url yet.
             # Provide safe local avatars based on node type and id so images show immediately.
             if not img:
                 if n_type == "brand":
                     img = f"/avatar/brand/{str(n)}.svg"
                 elif n_type == "artist":
-                    img = f"/avatar/artist/{str(n)}.svg"
+                    # Prefer Spotify cached image for this label when available (safe source, no phishing fetch).
+                    s_img = _spotify_image_for_label(spotify_cache, label)
+                    img = s_img or f"/avatar/artist/{str(n)}.svg"
             nodes.append({
                 "id": str(n),
-                "label": (data.get("label") or data.get("type") or str(n)),
+                "label": label,
                 "type": n_type,
                 "domain": data.get("domain", ""),
                 "full_url": data.get("full_url", ""),
