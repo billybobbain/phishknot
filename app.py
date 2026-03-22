@@ -7,7 +7,10 @@ import os
 import re
 import threading
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
+from urllib.parse import quote, urlparse
 
 from flask import Flask, send_from_directory, abort, jsonify, request
 
@@ -26,6 +29,33 @@ app = Flask(__name__)
 # Safe filename: alphanumeric, underscore, hyphen, one dot
 SAFE_FILENAME = re.compile(r"^[a-zA-Z0-9_.-]+$")
 SAFE_ID = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+# Spotify artist images: browser + Cytoscape canvas need same-origin or CORS; Spotify CDN often omits CORS.
+# We proxy these URLs through Flask so the graph can paint them reliably.
+_SPOTIFY_IMAGE_HOSTS = frozenset(
+    {
+        "i.scdn.co",
+        "mosaic.scdn.co",
+        "wrapped-images.spotifycdn.com",
+        "seed-mix-image.spotifycdn.com",
+        "lineup-images.spotifycdn.com",
+    }
+)
+
+
+def _proxify_spotify_image_url(url: str) -> str:
+    """Rewrite known Spotify CDN image URLs to same-origin /image-proxy so Cytoscape can draw them."""
+    u = (url or "").strip()
+    if not u.startswith("https://"):
+        return u
+    try:
+        host = urlparse(u).netloc.lower()
+        if host in _SPOTIFY_IMAGE_HOSTS:
+            return f"/image-proxy?url={quote(u, safe='')}"
+    except Exception:
+        pass
+    return u
+
 
 STATS_FILE = IMAGES_DIR / "stats.json"
 RUN_META_FILE = IMAGES_DIR / "run_meta.json"
@@ -458,13 +488,23 @@ function renderGraph(data){
     const id = node.id || node.label || "n";
     return `/avatar/${t}/${id}.svg`;
   };
+  const absoluteImageUrl = (u) => {
+    if (!u || typeof u !== "string") return u;
+    const s = u.trim();
+    if (s.startsWith("http://") || s.startsWith("https://")) return s;
+    try {
+      return new URL(s, window.location.href).href;
+    } catch (_) {
+      return s;
+    }
+  };
   for (const n of nodes) {
     const data = {
       id: n.id,
       label: n.label,
       type: n.type,
       degree: n.degree || 0,
-      image_url: fallbackImage(n),
+      image_url: absoluteImageUrl(fallbackImage(n)),
     };
     if (n.x != null && n.y != null && Number.isFinite(n.x) && Number.isFinite(n.y)) {
       data.position = { x: n.x, y: n.y };
@@ -504,7 +544,6 @@ function renderGraph(data){
         "background-color": (ele) => bgColor(ele.data("type")),
         "background-image": "data(image_url)",
         "background-fit": "cover",
-        "background-image-crossorigin": "anonymous",
         "border-width": 3,
         "border-color": (ele) => borderColor(ele.data("type")),
         "label": "data(label)",
@@ -787,6 +826,7 @@ def graph_data():
                 else:
                     # domain, url, or other: use type-based avatar so Cytoscape never gets empty background-image.
                     img = f"/avatar/{n_type or 'node'}/{str(n)}.svg"
+            img = _proxify_spotify_image_url(img)
             nodes.append({
                 "id": str(n),
                 "label": label,
@@ -826,6 +866,38 @@ def graph_data():
         })
     except Exception as e:
         return jsonify({"title": "Phishing graph", "nodes": [], "edges": [], "error": str(e)})
+
+
+@app.route("/image-proxy")
+def image_proxy():
+    """
+    Fetch a Spotify CDN image server-side and return it same-origin.
+    Cytoscape draws node backgrounds on canvas; crossOrigin + missing CORS headers breaks external Spotify URLs.
+    """
+    raw = (request.args.get("url") or "").strip()
+    if not raw.startswith("https://"):
+        abort(400)
+    try:
+        host = urlparse(raw).netloc.lower()
+    except Exception:
+        abort(400)
+    if host not in _SPOTIFY_IMAGE_HOSTS:
+        abort(404)
+    try:
+        req = urllib.request.Request(raw, headers={"User-Agent": "PhishingGraph/1.0 (image-proxy)"})
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            ct = resp.headers.get("Content-Type") or "image/jpeg"
+            data = resp.read()
+        if len(data) > 5_000_000:
+            abort(413)
+        if not ct.startswith("image/"):
+            abort(404)
+        return data, 200, {
+            "Content-Type": ct,
+            "Cache-Control": "public, max-age=86400",
+        }
+    except (urllib.error.URLError, OSError, ValueError):
+        abort(502)
 
 
 @app.route("/images/<filename>")
