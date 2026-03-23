@@ -32,6 +32,18 @@ The program pulls **real phishing-related URLs** from public feeds, looks for **
 
 ---
 
+## Screenshots
+
+**Static graph** — rendered / exported view of the graph (good for slides or print):
+
+![Static graph view](static-graph.png)
+
+**Interactive web view** — live app in the browser: pan, zoom, layout dropdown, run summary, and details panels:
+
+![Interactive graph view](interactive-graph.png)
+
+---
+
 ## One real run (example numbers)
 
 Your numbers will change every time; here’s **one** snapshot to show what the UI means:
