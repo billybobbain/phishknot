@@ -19,6 +19,7 @@ The program pulls **real phishing-related URLs** from public feeds, looks for **
 - **Real data:** The feeds point at malicious or suspicious URLs. The app is careful about **not** blindly downloading dangerous content (configurable “safe” modes).  
 - **Graphs tell stories:** A list of URLs is boring. A graph shows **patterns** — the same artist next to many brands, or domains that keep appearing.  
 - **It’s visual:** You can open the same data in **Gephi** (a desktop graph tool) using the **GEXF** files the pipeline exports.
+- **It's built using Cursor:** My employer is evaluating **Cursor** and I wanted to get familiar.
 
 ---
 
