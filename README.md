@@ -8,4 +8,11 @@ Explores phishing URLs linked to brands and artists: pulls from OpenPhish (and o
 - **Gephi:** See [GEPHI.md](GEPHI.md) for opening the GEXF and reading labels.
 - **Student-friendly write-up:** See [SPRING_BREAK.md](SPRING_BREAK.md) (“what I did over spring break” style overview).
 
+## Responsible Use & Safety
+
+- This project is for defensive research and education.
+- Do not use it to build phishing kits, steal credentials, or target real users.
+- Prefer safe mode (`NO_DOWNLOAD=true`) unless you understand and accept the risks of fetching live phishing pages.
+- Use an isolated environment (container/VM), keep dependencies updated, and avoid opening suspicious URLs directly in a normal browser profile.
+
 No secrets in the repo; set API keys and `OUTPUT_DIR` via environment variables (see RAILWAY.md).
