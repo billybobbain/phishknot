@@ -43,6 +43,11 @@ The program pulls **real phishing-related URLs** from public feeds, looks for **
 
 ![Interactive graph view](interactive-graph.png)
 
+**Live URLs:**
+
+- Main static page: [https://phishknot-production.up.railway.app/](https://phishknot-production.up.railway.app/)
+- Interactive page: [https://phishknot-production.up.railway.app/graph/interactive](https://phishknot-production.up.railway.app/graph/interactive)
+
 ---
 
 ## One real run (example numbers)
@@ -83,7 +88,7 @@ Your numbers will change every time; here’s **one** snapshot to show what the 
 - That **graphs** are a legit way to explore relationships in messy text + URLs.  
 - That **shipping a UI** (even a small one) forces you to handle edge cases — empty data, bad networks, browser quirks.  
 - That **writing down what you built** (like this doc!) helps for portfolios, science fairs, and future you.
-
+- That **Cursor** is not **IntelliJ** but does have an awesome coding agent in front. It approaches things in a very safe and professional manner. I am not sure how it will work with complex **Spring Boot Java**, but for PHP, Python and scripting it is solid. 
 ---
 
 ## If you want to run it yourself

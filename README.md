@@ -8,6 +8,11 @@ Explores phishing URLs linked to brands and artists: pulls from OpenPhish (and o
 - **Gephi:** See [GEPHI.md](GEPHI.md) for opening the GEXF and reading labels.
 - **Student-friendly write-up:** See [SPRING_BREAK.md](SPRING_BREAK.md) (“what I did over spring break” style overview).
 
+## Live Demo URLs
+
+- Main static page: [https://phishknot-production.up.railway.app/](https://phishknot-production.up.railway.app/)
+- Interactive page: [https://phishknot-production.up.railway.app/graph/interactive](https://phishknot-production.up.railway.app/graph/interactive)
+
 ## Responsible Use & Safety
 
 - This project is for defensive research and education.
