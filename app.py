@@ -159,6 +159,10 @@ def index():
         "</head><body>",
         "<main>",
         "<h1>Phishing graph</h1>",
+        "<p class='summary'><strong>Production URLs:</strong> "
+        "<a href='https://phishknot-production.up.railway.app/' target='_blank' rel='noreferrer'>main static page</a> • "
+        "<a href='https://phishknot-production.up.railway.app/graph/interactive' target='_blank' rel='noreferrer'>interactive page</a>"
+        "</p>",
     ]
     if latest.exists():
         lines.append("<section><p><strong>Latest</strong> (brands &amp; artists only)</p>")
@@ -271,6 +275,8 @@ def serve_interactive_graph():
 <header>
   <div class="left">
     <a class="btn" href="/">&larr; Back</a>
+    <a class="pill" href="https://phishknot-production.up.railway.app/" target="_blank" rel="noreferrer">Prod static URL</a>
+    <a class="pill" href="https://phishknot-production.up.railway.app/graph/interactive" target="_blank" rel="noreferrer">Prod interactive URL</a>
     <div id="status" class="pill">Loading…</div>
     <div id="summary" class="pill">—</div>
   </div>
