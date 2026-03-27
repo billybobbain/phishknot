@@ -86,16 +86,43 @@ _PROXY_PASS = os.environ.get("PROXY_PASSWORD", "").strip()
 _PROXY_LIST_URL = os.environ.get("PROXY_LIST_URL", "").strip()
 
 def _load_proxy_list() -> None:
-    """Fetch proxy list from PROXY_LIST_URL and populate _PROXY_LIST."""
+    """Fetch proxy list from Webshare API and populate _PROXY_LIST.
+    If PROXY_API_KEY is set, uses the v2 list API (paginated JSON).
+    Falls back to fetching PROXY_LIST_URL directly (plain-text download URL).
+    """
     global _PROXY_LIST
+    api_key = os.environ.get("PROXY_API_KEY", "").strip()
+    if api_key:
+        # Webshare v2 API: GET /api/v2/proxy/list/?mode=direct&page=1&page_size=100
+        try:
+            headers = {"Authorization": f"Token {api_key}", "User-Agent": "PhishKnot/1.0"}
+            resp = requests.get(
+                "https://proxy.webshare.io/api/v2/proxy/list/",
+                params={"mode": "direct", "page": 1, "page_size": 100},
+                headers=headers,
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            results = data.get("results", [])
+            entries = []
+            for p in results:
+                host = p.get("proxy_address", "")
+                port = p.get("port", "")
+                user = p.get("username", "") or _PROXY_USER
+                pw = p.get("password", "") or _PROXY_PASS
+                if host and port:
+                    entries.append(f"{host}:{port}:{user}:{pw}")
+            _PROXY_LIST = entries
+            print(f"Loaded {len(_PROXY_LIST)} proxies via Webshare API.")
+            return
+        except Exception as e:
+            print(f"Warning: Webshare API proxy fetch failed: {e}")
+    # Fallback: plain-text download URL
     if not _PROXY_LIST_URL:
         return
     try:
-        headers = {"User-Agent": "PhishKnot/1.0"}
-        api_key = os.environ.get("PROXY_API_KEY", "").strip()
-        if api_key:
-            headers["Authorization"] = f"Token {api_key}"
-        resp = requests.get(_PROXY_LIST_URL, timeout=10, headers=headers)
+        resp = requests.get(_PROXY_LIST_URL, timeout=10, headers={"User-Agent": "PhishKnot/1.0"})
         resp.raise_for_status()
         entries = [line.strip() for line in resp.text.splitlines() if line.strip()]
         _PROXY_LIST = entries
