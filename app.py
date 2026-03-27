@@ -493,10 +493,15 @@ function colorForType(t){
   return "#95a5a6";
 }
 
+let _serverPos = {};  // server-computed babbleknot positions, keyed by node id
+
 function getLayoutOpts(){
   const layoutEl = el("layoutMode");
-  const name = (layoutEl && layoutEl.value) ? layoutEl.value : "cose";
+  const name = (layoutEl && layoutEl.value) ? layoutEl.value : "preset";
   const base = { animate: false, fit: true, padding: 40 };
+  if (name === "preset") {
+    return { ...base, name: "preset", positions: (node) => _serverPos[node.id()] };
+  }
   if (name === "cose") {
     const repulsion = parseInt(el("coseRepulsion")?.value || "55000", 10);
     const edgeLen = parseInt(el("coseEdgeLen")?.value || "220", 10);
@@ -523,6 +528,7 @@ function renderGraph(data){
   const nodes = data.nodes;
   const edges = data.edges || [];
 
+  _serverPos = {};
   const elements = [];
   const fallbackImage = (node) => {
     const u = (node.image_url || "").trim();
@@ -549,10 +555,13 @@ function renderGraph(data){
       degree: n.degree || 0,
       image_url: absoluteImageUrl(fallbackImage(n)),
     };
+    const el = { data };
     if (n.x != null && n.y != null && Number.isFinite(n.x) && Number.isFinite(n.y)) {
-      data.position = { x: n.x, y: n.y };
+      const p = { x: n.x, y: n.y };
+      el.position = p;
+      _serverPos[n.id] = p;
     }
-    elements.push({ data });
+    elements.push(el);
   }
   for (const e of edges) {
     elements.push({
