@@ -77,6 +77,40 @@ NO_DOWNLOAD = os.environ.get("NO_DOWNLOAD", "true").lower() not in ("0", "false"
 MAX_RESPONSE_BYTES = 512 * 1024  # Cap HTML size (512 KB) to limit parser exposure.
 MAX_REDIRECTS = 3
 
+# Proxy support (optional). Set PROXY_LIST_URL to a Webshare-style newline-separated
+# list of host:port entries, plus PROXY_USERNAME / PROXY_PASSWORD for auth.
+# If not set, requests go direct (no proxy).
+_PROXY_LIST: list[str] = []
+_PROXY_USER = os.environ.get("PROXY_USERNAME", "").strip()
+_PROXY_PASS = os.environ.get("PROXY_PASSWORD", "").strip()
+_PROXY_LIST_URL = os.environ.get("PROXY_LIST_URL", "").strip()
+
+def _load_proxy_list() -> None:
+    """Fetch proxy list from PROXY_LIST_URL and populate _PROXY_LIST."""
+    global _PROXY_LIST
+    if not _PROXY_LIST_URL:
+        return
+    try:
+        resp = requests.get(_PROXY_LIST_URL, timeout=10)
+        resp.raise_for_status()
+        entries = [line.strip() for line in resp.text.splitlines() if line.strip()]
+        _PROXY_LIST = entries
+        print(f"Loaded {len(_PROXY_LIST)} proxies from PROXY_LIST_URL.")
+    except Exception as e:
+        print(f"Warning: could not load proxy list: {e}")
+
+def _pick_proxy() -> dict | None:
+    """Return a random requests proxy dict, or None if no proxies configured."""
+    if not _PROXY_LIST:
+        return None
+    import random
+    host_port = random.choice(_PROXY_LIST)
+    if _PROXY_USER and _PROXY_PASS:
+        proxy_url = f"http://{_PROXY_USER}:{_PROXY_PASS}@{host_port}"
+    else:
+        proxy_url = f"http://{host_port}"
+    return {"http": proxy_url, "https": proxy_url}
+
 # Focus on "obscure" lures: only include URLs where BOTH at least one brand AND at least one artist were found.
 # Override with env: CO_OCCURRENCE_ONLY=1 to keep only artist+brand-together cases.
 CO_OCCURRENCE_ONLY = os.environ.get("CO_OCCURRENCE_ONLY", "").lower() in ("1", "true", "yes")
@@ -919,12 +953,14 @@ def download_page(url):
     try:
         session = requests.Session()
         session.max_redirects = MAX_REDIRECTS
+        proxies = _pick_proxy()
         r = session.get(
             url,
             timeout=15,
             headers={"User-Agent": USER_AGENT},
             allow_redirects=True,
             stream=True,
+            proxies=proxies,
         )
         r.raise_for_status()
         # Cap bytes read so we never load huge or maliciously large bodies
@@ -1770,6 +1806,7 @@ def print_stats(G, results):
 # -----------------------------------------------------------------------------
 def main():
     global _artist_keywords_combined
+    _load_proxy_list()
     # Refresh Last.fm top-artists cache if configured, then build combined artist list for matching.
     refresh_lastfm_cache_if_needed()
     _artist_keywords_combined = build_combined_artist_keywords()
