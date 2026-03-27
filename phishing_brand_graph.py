@@ -1705,6 +1705,9 @@ def main():
         page_image_file = ""
         if hero_img_url:
             page_image_file = download_and_cache_image(hero_img_url, PAGE_IMAGES_DIR)
+            print(f"  hero image: {hero_img_url[:80]} -> {'cached: ' + page_image_file if page_image_file else 'FAILED (bad format or download error)'}")
+        else:
+            print(f"  hero image: none found in page")
         brands = set(match_detail["brands_in_url"]) | set(match_detail["brands_in_text"])
         artist_keys = set(match_detail["artists_in_url"]) | set(match_detail["artists_in_text"])
         artists = []
