@@ -476,7 +476,7 @@ function getLayoutOpts(){
   const name = (layoutEl && layoutEl.value) ? layoutEl.value : "cose";
   const base = { animate: false, fit: true, padding: 40 };
   if (name === "cose") {
-    return { ...base, name: "cose", nodeRepulsion: 9000, idealEdgeLength: 140, edgeElasticity: 0.2, gravity: 0.25, numIter: 600 };
+    return { ...base, name: "cose", nodeRepulsion: 55000, idealEdgeLength: 220, edgeElasticity: 0.35, gravity: 0.1, numIter: 1000 };
   }
   if (name === "concentric") {
     return { ...base, name: "concentric", concentric: (node) => node.degree(), levelWidth: () => 1 };
