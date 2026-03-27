@@ -100,15 +100,22 @@ def _load_proxy_list() -> None:
         print(f"Warning: could not load proxy list: {e}")
 
 def _pick_proxy() -> dict | None:
-    """Return a random requests proxy dict, or None if no proxies configured."""
+    """Return a random requests proxy dict, or None if no proxies configured.
+    Expects list entries in Webshare format: host:port:username:password
+    Falls back to host:port (with PROXY_USERNAME/PROXY_PASSWORD) if only 2 fields.
+    """
     if not _PROXY_LIST:
         return None
     import random
-    host_port = random.choice(_PROXY_LIST)
-    if _PROXY_USER and _PROXY_PASS:
-        proxy_url = f"http://{_PROXY_USER}:{_PROXY_PASS}@{host_port}"
+    entry = random.choice(_PROXY_LIST)
+    parts = entry.split(":")
+    if len(parts) >= 4:
+        host, port, user, password = parts[0], parts[1], parts[2], ":".join(parts[3:])
+        proxy_url = f"http://{user}:{password}@{host}:{port}"
+    elif len(parts) == 2 and _PROXY_USER and _PROXY_PASS:
+        proxy_url = f"http://{_PROXY_USER}:{_PROXY_PASS}@{entry}"
     else:
-        proxy_url = f"http://{host_port}"
+        proxy_url = f"http://{entry}"
     return {"http": proxy_url, "https": proxy_url}
 
 # Focus on "obscure" lures: only include URLs where BOTH at least one brand AND at least one artist were found.
