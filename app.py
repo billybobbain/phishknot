@@ -942,7 +942,10 @@ def image_proxy():
     if host not in _PROXIED_IMAGE_HOSTS:
         abort(404)
     try:
-        req = urllib.request.Request(raw, headers={"User-Agent": "PhishingGraph/1.0 (image-proxy)"})
+        req = urllib.request.Request(raw, headers={
+            "User-Agent": "PhishKnot/1.0 (https://github.com/billybobbain/phishknot; defensive security research)",
+            "Accept": "image/svg+xml,image/*,*/*;q=0.8",
+        })
         with urllib.request.urlopen(req, timeout=12) as resp:
             ct = resp.headers.get("Content-Type") or "image/jpeg"
             data = resp.read()
