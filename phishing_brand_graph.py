@@ -1633,16 +1633,22 @@ def main():
     if use_spotify:
         save_spotify_cache(spotify_cache)
 
-    # Optionally restrict to artist+brand co-occurrence only (obscure lures).
+    # Always write the co-occurrence subset (URLs with BOTH brand AND artist) so the UI dropdown works.
+    co_results = [r for r in results if (r.get("brands") and r.get("artists"))]
+    if co_results:
+        export_url_brands_csv(co_results, CO_OCCURRENCE_CSV)
+        export_gexf(build_graph(co_results), CO_OCCURRENCE_GEXF)
+        print(f"Co-occurrence subset: {len(co_results)} URLs. Wrote {CO_OCCURRENCE_GEXF}.")
+    else:
+        print("No co-occurrences found (no URLs with both brand and artist).")
+
+    # Optionally restrict pipeline output to co-occurrence only.
     if CO_OCCURRENCE_ONLY:
-        results = [r for r in results if (r.get("brands") and r.get("artists"))]
-        print(f"\nCO_OCCURRENCE_ONLY: kept {len(results)} URLs that have both at least one brand and one artist.")
+        results = co_results
+        print(f"CO_OCCURRENCE_ONLY: keeping only the {len(results)} co-occurrence URLs.")
         if not results:
-            print("No co-occurrences found. Try NO_DOWNLOAD=False (and run in Docker) to scan page content.")
+            print("Try NO_DOWNLOAD=False (and run in Docker) to scan page content.")
             return
-        export_url_brands_csv(results, CO_OCCURRENCE_CSV)
-        export_gexf(build_graph(results), CO_OCCURRENCE_GEXF)
-        print(f"Wrote co-occurrence graph to {CO_OCCURRENCE_GEXF} and list to {CO_OCCURRENCE_CSV}.")
     else:
         export_url_brands_csv(results, URL_BRANDS_CSV)
 
