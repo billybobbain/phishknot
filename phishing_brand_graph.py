@@ -54,6 +54,7 @@ HISTORY_DB = _OUTPUT_BASE / "url_history.db"
 CO_OCCURRENCE_GEXF = _OUTPUT_BASE / "co_occurrence.gexf"
 CO_OCCURRENCE_CSV = _OUTPUT_BASE / "co_occurrence_urls.csv"
 OUTPUT_IMAGES_DIR = _OUTPUT_BASE / "output"  # Rendered graph PNGs (latest.png, graph_*.png)
+PAGE_IMAGES_DIR = OUTPUT_IMAGES_DIR / "page_images"  # Cached hero images from phishing pages
 RUN_META_JSON = OUTPUT_IMAGES_DIR / "run_meta.json"
 KEYWORDS_JSON = OUTPUT_IMAGES_DIR / "keywords.json"
 MATCHES_JSON = OUTPUT_IMAGES_DIR / "matches.json"
@@ -807,6 +808,113 @@ def extract_visible_text(html):
     return text
 
 
+_TRACKER_PATTERNS = ("pixel", "track", "beacon", "1x1", "spacer", "blank", "transparent")
+
+def extract_page_hero_image(html, base_url):
+    """
+    Extract the most prominent image URL from a phishing page.
+    Filters out trackers, tiny images, and data URIs.
+    Returns an absolute URL or empty string.
+    """
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+        parsed_base = urlparse(base_url)
+        base_scheme = parsed_base.scheme or "https"
+        base_netloc = parsed_base.netloc or ""
+        for img in soup.find_all("img", src=True):
+            src = (img.get("src") or "").strip()
+            if not src or src.startswith("data:"):
+                continue
+            src_lower = src.lower()
+            if any(t in src_lower for t in _TRACKER_PATTERNS):
+                continue
+            try:
+                w = int(img.get("width") or 0)
+                h = int(img.get("height") or 0)
+                if (w and w < 50) or (h and h < 50):
+                    continue
+            except (ValueError, TypeError):
+                pass
+            # Resolve to absolute URL
+            if src.startswith("//"):
+                src = base_scheme + ":" + src
+            elif src.startswith("/"):
+                src = f"{base_scheme}://{base_netloc}{src}"
+            elif not src.startswith("http"):
+                path = parsed_base.path.rsplit("/", 1)[0]
+                src = f"{base_scheme}://{base_netloc}{path}/{src}"
+            return src
+    except Exception:
+        pass
+    return ""
+
+
+_IMAGE_MAGIC = [
+    (b"\xff\xd8\xff", ".jpg"),
+    (b"\x89PNG\r\n\x1a\n", ".png"),
+    (b"GIF87a", ".gif"),
+    (b"GIF89a", ".gif"),
+    (b"RIFF", ".webp"),  # WebP: RIFF....WEBP — verified below
+]
+
+def _detect_image_ext(data: bytes):
+    """
+    Validate file magic bytes and return the correct extension.
+    Returns empty string if the data doesn't match a known safe image format.
+    """
+    if data[:3] == b"\xff\xd8\xff":
+        return ".jpg"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return ".png"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return ".gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return ".webp"
+    return ""
+
+
+def download_and_cache_image(img_url, cache_dir):
+    """
+    Fetch an image URL and save it to cache_dir.
+    Uses a hash of the URL as the filename so it's deterministic and safe.
+    Validates magic bytes — does not trust Content-Type from the server.
+    Returns the filename (not full path) on success, or empty string on failure.
+    """
+    try:
+        url_hash = hashlib.sha256(img_url.encode("utf-8")).hexdigest()[:16]
+        cache_dir = Path(cache_dir)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        # Check cache with any known extension before fetching
+        for ext in (".jpg", ".png", ".gif", ".webp"):
+            candidate = cache_dir / f"page_{url_hash}{ext}"
+            if candidate.exists():
+                return candidate.name
+        r = requests.get(
+            img_url,
+            timeout=10,
+            headers={"User-Agent": USER_AGENT},
+            stream=True,
+        )
+        r.raise_for_status()
+        chunks = []
+        total = 0
+        for chunk in r.iter_content(8192):
+            if chunk:
+                total += len(chunk)
+                if total > 2_000_000:
+                    break
+                chunks.append(chunk)
+        data = b"".join(chunks)
+        ext = _detect_image_ext(data)
+        if not ext:
+            return ""  # Not a recognized image format — discard
+        filename = f"page_{url_hash}{ext}"
+        (cache_dir / filename).write_bytes(data)
+        return filename
+    except Exception:
+        return ""
+
+
 # -----------------------------------------------------------------------------
 # Keyword matching
 # -----------------------------------------------------------------------------
@@ -1043,7 +1151,7 @@ def _short_url_label_for_gexf(url, hostname_total_count=1):
         return "unknown"
 
 
-def build_graph(results):
+def build_graph(results, brand_images=None):
     """
     results: list of dicts, each:
       url, domain, brands (set), artists (list of dict), optional evidence (url_parse | page_content)
@@ -1103,6 +1211,8 @@ def build_graph(results):
             if not b:
                 continue
             b_id = get_id("brand", b)
+            page_img = (brand_images or {}).get(b, "")
+            brand_image_url = f"/page-images/{page_img}" if page_img else f"/avatar/brand/{b_id}.svg"
             G.add_node(
                 b_id,
                 type="brand",
@@ -1111,8 +1221,7 @@ def build_graph(results):
                 domain="",
                 title=b,
                 popularity=0,
-                # Safe avatar generated/served by the web app (no external fetch).
-                image_url=f"/avatar/brand/{b_id}.svg",
+                image_url=brand_image_url,
             )
             G.add_edge(b_id, u_id, relationship_type="brand_referenced", evidence_source=evidence)
         artists_this_page = []
@@ -1592,6 +1701,10 @@ def main():
             continue
         text = extract_visible_text(html)
         match_detail = _compute_match_details(url, text=text)
+        hero_img_url = extract_page_hero_image(html, url)
+        page_image_file = ""
+        if hero_img_url:
+            page_image_file = download_and_cache_image(hero_img_url, PAGE_IMAGES_DIR)
         brands = set(match_detail["brands_in_url"]) | set(match_detail["brands_in_text"])
         artist_keys = set(match_detail["artists_in_url"]) | set(match_detail["artists_in_text"])
         artists = []
@@ -1627,17 +1740,30 @@ def main():
                 "artists": artists,
                 "evidence": "page_content",
                 "match_detail": match_detail,
+                "page_image_file": page_image_file,
             })
         time.sleep(REQUEST_DELAY)
 
     if use_spotify:
         save_spotify_cache(spotify_cache)
 
+    # Build brand_images: first cached page image found per brand (first-wins across all results).
+    brand_images = {}
+    for r in results:
+        pf = r.get("page_image_file", "")
+        if not pf:
+            continue
+        for b in r.get("brands", set()):
+            if b and b not in brand_images:
+                brand_images[b] = pf
+    if brand_images:
+        print(f"Brand images cached: {len(brand_images)} brands have page images.")
+
     # Always write the co-occurrence subset (URLs with BOTH brand AND artist) so the UI dropdown works.
     co_results = [r for r in results if (r.get("brands") and r.get("artists"))]
     if co_results:
         export_url_brands_csv(co_results, CO_OCCURRENCE_CSV)
-        export_gexf(build_graph(co_results), CO_OCCURRENCE_GEXF)
+        export_gexf(build_graph(co_results, brand_images=brand_images), CO_OCCURRENCE_GEXF)
         print(f"Co-occurrence subset: {len(co_results)} URLs. Wrote {CO_OCCURRENCE_GEXF}.")
     else:
         print("No co-occurrences found (no URLs with both brand and artist).")
@@ -1652,7 +1778,7 @@ def main():
     else:
         export_url_brands_csv(results, URL_BRANDS_CSV)
 
-    G = build_graph(results)
+    G = build_graph(results, brand_images=brand_images)
     export_gexf(G, GRAPH_GEXF)
     export_edges_csv(G, EDGES_CSV)
     if not CO_OCCURRENCE_ONLY:

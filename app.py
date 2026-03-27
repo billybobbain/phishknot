@@ -906,6 +906,20 @@ def image_proxy():
         abort(502)
 
 
+@app.route("/page-images/<filename>")
+def serve_page_image(filename):
+    """Serve a cached page hero image. Strict filename validation to prevent path traversal."""
+    if not SAFE_FILENAME.match(filename):
+        abort(404)
+    path = IMAGES_DIR / "page_images" / filename
+    if not path.is_file():
+        abort(404)
+    ext = Path(filename).suffix.lower()
+    mime = {"jpg": "image/jpeg", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+            ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp"}.get(ext, "image/jpeg")
+    return send_from_directory(IMAGES_DIR / "page_images", filename, mimetype=mime)
+
+
 @app.route("/images/<filename>")
 def serve_image(filename):
     """Serve an image from the output directory. Restrict filename to avoid path traversal."""
