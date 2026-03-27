@@ -845,6 +845,10 @@ def _babbleknot_layout(H):
     if not heavy:
         return nx.spring_layout(H, k=2.0, seed=42, iterations=100)
 
+    # Pixel scale: heavy anchors spread over ~2000px canvas; light nodes in rings around them
+    ANCHOR_SCALE = 900   # px between heavy nodes
+    CLUSTER_RADIUS = 160  # base px radius of light-node rings; grows with cluster size
+
     # Layout heavy nodes among themselves — high k = lots of space between anchors
     H_heavy = H.subgraph(heavy)
     n = len(heavy)
@@ -852,11 +856,12 @@ def _babbleknot_layout(H):
     if n == 1:
         pos[heavy[0]] = (0.0, 0.0)
     else:
-        pos.update(nx.spring_layout(H_heavy, k=k, seed=42, iterations=300))
+        raw = nx.spring_layout(H_heavy, k=k, seed=42, iterations=300)
+        for node, (x, y) in raw.items():
+            pos[node] = (x * ANCHOR_SCALE, y * ANCHOR_SCALE)
 
     # Position each light node near the centroid of its heavy neighbors
     rng = random.Random(42)
-    # Count how many light nodes share each heavy-neighbor set so we can spread them out
     centroid_counts = {}
     for node in light:
         heavy_nb = tuple(sorted(nb for nb in H.neighbors(node) if nb in pos))
@@ -869,17 +874,17 @@ def _babbleknot_layout(H):
             cx = sum(pos[nb][0] for nb in heavy_nb) / len(heavy_nb)
             cy = sum(pos[nb][1] for nb in heavy_nb) / len(heavy_nb)
         else:
-            # Orphan — place on outer ring
+            # Orphan — place on outer ring beyond all anchors
             angle = rng.uniform(0, 2 * math.pi)
-            cx, cy = math.cos(angle) * 2.0, math.sin(angle) * 2.0
+            cx, cy = math.cos(angle) * ANCHOR_SCALE * 1.5, math.sin(angle) * ANCHOR_SCALE * 1.5
 
-        # Spread multiple light nodes around the same centroid in a small circle
         count = centroid_counts.get(heavy_nb, 1)
         idx = centroid_idx.get(heavy_nb, 0)
         centroid_idx[heavy_nb] = idx + 1
-        spread = 0.12 * math.sqrt(count)
-        angle = (2 * math.pi * idx / max(count, 1)) + rng.uniform(-0.1, 0.1)
-        pos[node] = (cx + math.cos(angle) * spread, cy + math.sin(angle) * spread)
+        # Radius grows with cluster size so nodes don't stack
+        radius = CLUSTER_RADIUS * math.sqrt(count)
+        angle = (2 * math.pi * idx / max(count, 1)) + rng.uniform(-0.05, 0.05)
+        pos[node] = (cx + math.cos(angle) * radius, cy + math.sin(angle) * radius)
 
     return pos
 
