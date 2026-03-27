@@ -91,7 +91,11 @@ def _load_proxy_list() -> None:
     if not _PROXY_LIST_URL:
         return
     try:
-        resp = requests.get(_PROXY_LIST_URL, timeout=10)
+        headers = {"User-Agent": "PhishKnot/1.0"}
+        api_key = os.environ.get("PROXY_API_KEY", "").strip()
+        if api_key:
+            headers["Authorization"] = f"Token {api_key}"
+        resp = requests.get(_PROXY_LIST_URL, timeout=10, headers=headers)
         resp.raise_for_status()
         entries = [line.strip() for line in resp.text.splitlines() if line.strip()]
         _PROXY_LIST = entries
