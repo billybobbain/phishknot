@@ -346,6 +346,25 @@ def serve_interactive_graph():
       </div>
     </div>
 
+    <details id="coseDetails">
+      <summary style="cursor:pointer;color:var(--muted);font-size:13px;padding:6px 0">CoSE tuning</summary>
+      <div style="padding:4px 0">
+        <div class="field"><div class="label" style="font-size:12px">Repulsion</div>
+          <div class="value"><input id="coseRepulsion" type="range" min="1000" max="200000" step="1000" value="55000" style="width:100%">
+          <span id="coseRepulsionVal" style="font-size:11px;color:var(--muted)">55000</span></div></div>
+        <div class="field"><div class="label" style="font-size:12px">Edge length</div>
+          <div class="value"><input id="coseEdgeLen" type="range" min="50" max="500" step="10" value="220" style="width:100%">
+          <span id="coseEdgeLenVal" style="font-size:11px;color:var(--muted)">220</span></div></div>
+        <div class="field"><div class="label" style="font-size:12px">Gravity</div>
+          <div class="value"><input id="coseGravity" type="range" min="0" max="100" step="1" value="10" style="width:100%">
+          <span id="coseGravityVal" style="font-size:11px;color:var(--muted)">0.10</span></div></div>
+        <div class="field"><div class="label" style="font-size:12px">Iterations</div>
+          <div class="value"><input id="coseIter" type="range" min="100" max="3000" step="100" value="1000" style="width:100%">
+          <span id="coseIterVal" style="font-size:11px;color:var(--muted)">1000</span></div></div>
+        <button class="btn" id="rerunLayout" style="width:100%;margin-top:6px">Re-run layout</button>
+      </div>
+    </details>
+
     <div class="legend">
       <span class="chip"><span class="dot brand"></span> brand</span>
       <span class="chip"><span class="dot artist"></span> artist</span>
@@ -479,7 +498,11 @@ function getLayoutOpts(){
   const name = (layoutEl && layoutEl.value) ? layoutEl.value : "cose";
   const base = { animate: false, fit: true, padding: 40 };
   if (name === "cose") {
-    return { ...base, name: "cose", nodeRepulsion: 55000, idealEdgeLength: 220, edgeElasticity: 0.35, gravity: 0.1, numIter: 1000 };
+    const repulsion = parseInt(el("coseRepulsion")?.value || "55000", 10);
+    const edgeLen = parseInt(el("coseEdgeLen")?.value || "220", 10);
+    const gravity = parseInt(el("coseGravity")?.value || "10", 10) / 100;
+    const iters = parseInt(el("coseIter")?.value || "1000", 10);
+    return { ...base, name: "cose", nodeRepulsion: repulsion, idealEdgeLength: edgeLen, edgeElasticity: 0.35, gravity, numIter: iters };
   }
   if (name === "concentric") {
     return { ...base, name: "concentric", concentric: (node) => node.degree(), levelWidth: () => 1 };
@@ -655,6 +678,21 @@ if (layoutMode) layoutMode.addEventListener("change", () => {
 });
 const searchBox = el("searchBox");
 if (searchBox) searchBox.addEventListener("keydown", (ev) => { if (ev.key === "Enter") applySearch(); });
+
+// CoSE tuning sliders
+[
+  ["coseRepulsion", "coseRepulsionVal", v => v],
+  ["coseEdgeLen",   "coseEdgeLenVal",   v => v],
+  ["coseGravity",   "coseGravityVal",   v => (parseInt(v,10)/100).toFixed(2)],
+  ["coseIter",      "coseIterVal",      v => v],
+].forEach(([sliderId, valId, fmt]) => {
+  const s = el(sliderId);
+  if (s) s.addEventListener("input", () => { const v = el(valId); if(v) v.textContent = fmt(s.value); });
+});
+const rerunLayout = el("rerunLayout");
+if (rerunLayout) rerunLayout.addEventListener("click", () => {
+  if (cy && cy.elements().length > 0) cy.layout(getLayoutOpts()).run();
+});
 
 refreshAll();
 </script>
