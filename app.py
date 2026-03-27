@@ -32,25 +32,28 @@ SAFE_ID = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 # Spotify artist images: browser + Cytoscape canvas need same-origin or CORS; Spotify CDN often omits CORS.
 # We proxy these URLs through Flask so the graph can paint them reliably.
-_SPOTIFY_IMAGE_HOSTS = frozenset(
+_PROXIED_IMAGE_HOSTS = frozenset(
     {
+        # Spotify CDN
         "i.scdn.co",
         "mosaic.scdn.co",
         "wrapped-images.spotifycdn.com",
         "seed-mix-image.spotifycdn.com",
         "lineup-images.spotifycdn.com",
+        # Wikimedia Commons (brand logos)
+        "upload.wikimedia.org",
     }
 )
 
 
 def _proxify_spotify_image_url(url: str) -> str:
-    """Rewrite known Spotify CDN image URLs to same-origin /image-proxy so Cytoscape can draw them."""
+    """Rewrite known external image URLs to same-origin /image-proxy so Cytoscape can draw them on canvas."""
     u = (url or "").strip()
     if not u.startswith("https://"):
         return u
     try:
         host = urlparse(u).netloc.lower()
-        if host in _SPOTIFY_IMAGE_HOSTS:
+        if host in _PROXIED_IMAGE_HOSTS:
             return f"/image-proxy?url={quote(u, safe='')}"
     except Exception:
         pass
@@ -898,7 +901,7 @@ def image_proxy():
         host = urlparse(raw).netloc.lower()
     except Exception:
         abort(400)
-    if host not in _SPOTIFY_IMAGE_HOSTS:
+    if host not in _PROXIED_IMAGE_HOSTS:
         abort(404)
     try:
         req = urllib.request.Request(raw, headers={"User-Agent": "PhishingGraph/1.0 (image-proxy)"})

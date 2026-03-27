@@ -535,6 +535,79 @@ BANK_KEYWORDS = [
 # Combined brand list for matching (non-bank + bank)
 BRAND_KEYWORDS = OTHER_BRAND_KEYWORDS + BANK_KEYWORDS
 
+# Curated brand logo map: keyword -> Wikimedia Commons image URL.
+# Used as fallback when no page image was captured from the phishing page.
+# Keys must match the keyword strings used in OTHER_BRAND_KEYWORDS / BANK_KEYWORDS.
+BRAND_LOGO_MAP = {
+    # Tech / shipping
+    "apple":        "https://upload.wikimedia.org/wikipedia/commons/f/fa/Apple_logo_black.svg",
+    "microsoft":    "https://upload.wikimedia.org/wikipedia/commons/4/44/Microsoft_logo.svg",
+    "google":       "https://upload.wikimedia.org/wikipedia/commons/2/2f/Google_2015_logo.svg",
+    "amazon":       "https://upload.wikimedia.org/wikipedia/commons/a/a9/Amazon_logo.svg",
+    "paypal":       "https://upload.wikimedia.org/wikipedia/commons/b/b5/PayPal.svg",
+    "netflix":      "https://upload.wikimedia.org/wikipedia/commons/0/08/Netflix_2015_logo.svg",
+    "facebook":     "https://upload.wikimedia.org/wikipedia/commons/5/51/Facebook_f_logo_%282019%29.svg",
+    "instagram":    "https://upload.wikimedia.org/wikipedia/commons/e/e7/Instagram_logo_2016.svg",
+    "spotify":      "https://upload.wikimedia.org/wikipedia/commons/2/26/Spotify_logo_with_text.svg",
+    "adobe":        "https://upload.wikimedia.org/wikipedia/commons/8/8e/Adobe_Corporate_Logo.png",
+    "samsung":      "https://upload.wikimedia.org/wikipedia/commons/2/24/Samsung_Logo.svg",
+    "linkedin":     "https://upload.wikimedia.org/wikipedia/commons/c/ca/LinkedIn_logo_initials.png",
+    "twitter":      "https://upload.wikimedia.org/wikipedia/commons/6/6f/Logo_of_Twitter.svg",
+    "dropbox":      "https://upload.wikimedia.org/wikipedia/commons/7/74/Dropbox_logo_%282013%29.svg",
+    "fedex":        "https://upload.wikimedia.org/wikipedia/commons/b/b9/FedEx_Corporation_-_2016_Logo.svg",
+    "ups":          "https://upload.wikimedia.org/wikipedia/commons/1/1b/UPS_Logo_Shield_2017.svg",
+    "dhl":          "https://upload.wikimedia.org/wikipedia/commons/a/ac/DHL_Logo.svg",
+    "disney":       "https://upload.wikimedia.org/wikipedia/commons/5/5f/Disney_wordmark_%282010-present%29.svg",
+    # US banks
+    "jpmorgan":     "https://upload.wikimedia.org/wikipedia/commons/a/af/J_P_Morgan_Logo_2008_1.svg",
+    "chase":        "https://upload.wikimedia.org/wikipedia/commons/a/af/J_P_Morgan_Logo_2008_1.svg",
+    "bank of america": "https://upload.wikimedia.org/wikipedia/commons/e/e4/Bank_of_America_logo.svg",
+    "bofa":         "https://upload.wikimedia.org/wikipedia/commons/e/e4/Bank_of_America_logo.svg",
+    "wells fargo":  "https://upload.wikimedia.org/wikipedia/commons/b/b3/Wells_Fargo_Bank.svg",
+    "citibank":     "https://upload.wikimedia.org/wikipedia/commons/1/1e/Citi.svg",
+    "citi":         "https://upload.wikimedia.org/wikipedia/commons/1/1e/Citi.svg",
+    "pnc":          "https://upload.wikimedia.org/wikipedia/commons/4/43/PNC_Financial_Services_logo.svg",
+    "us bank":      "https://upload.wikimedia.org/wikipedia/commons/7/7a/US_Bancorp_logo_%282016%29.svg",
+    "capital one":  "https://upload.wikimedia.org/wikipedia/commons/9/98/Capital_One_logo.svg",
+    "td bank":      "https://upload.wikimedia.org/wikipedia/commons/a/a4/Toronto-Dominion_Bank_logo.svg",
+    "truist":       "https://upload.wikimedia.org/wikipedia/commons/5/53/Truist_Financial_Corporation_logo.svg",
+    "bmo":          "https://upload.wikimedia.org/wikipedia/commons/b/b8/BMO_Financial_Group_logo.svg",
+    # UK / Europe
+    "hsbc":         "https://upload.wikimedia.org/wikipedia/commons/a/aa/HSBC_logo_%282018%29.svg",
+    "barclays":     "https://upload.wikimedia.org/wikipedia/commons/7/7a/Barclays_Logo.svg",
+    "lloyds":       "https://upload.wikimedia.org/wikipedia/commons/1/10/Lloyds_Bank.svg",
+    "natwest":      "https://upload.wikimedia.org/wikipedia/commons/6/60/NatWest_logo.svg",
+    "rbs":          "https://upload.wikimedia.org/wikipedia/commons/6/60/NatWest_logo.svg",
+    "tsb":          "https://upload.wikimedia.org/wikipedia/commons/d/d8/TSB_Bank_logo.svg",
+    "santander":    "https://upload.wikimedia.org/wikipedia/commons/b/be/Logo_Banco_Santander.svg",
+    "ing":          "https://upload.wikimedia.org/wikipedia/commons/4/49/ING_Group_N.V._Logo.svg",
+    "bnp":          "https://upload.wikimedia.org/wikipedia/commons/3/38/BNP_Paribas_logo.svg",
+    "deutsche bank":"https://upload.wikimedia.org/wikipedia/commons/7/7b/Deutsche_bank_logo_without_wordmark.svg",
+    "ubs":          "https://upload.wikimedia.org/wikipedia/commons/b/bb/UBS_Logo.svg",
+    "rbc":          "https://upload.wikimedia.org/wikipedia/commons/8/8b/RBC-Royal-Bank.svg",
+    "scotiabank":   "https://upload.wikimedia.org/wikipedia/commons/7/74/Scotiabank_logo.svg",
+    # Asia / Pacific
+    "dbs":          "https://upload.wikimedia.org/wikipedia/commons/8/8e/DBS_Bank_logo.svg",
+    "bdo":          "https://upload.wikimedia.org/wikipedia/commons/2/26/BDO_Unibank_logo.svg",
+    "bca":          "https://upload.wikimedia.org/wikipedia/commons/3/35/Bank_Central_Asia.svg",
+    "sbi":          "https://upload.wikimedia.org/wikipedia/commons/c/cc/SBI-logo.svg",
+    "icici":        "https://upload.wikimedia.org/wikipedia/commons/1/12/ICICI_Bank_Logo.svg",
+    "hdfc":         "https://upload.wikimedia.org/wikipedia/commons/2/28/HDFC_Bank_Logo.svg",
+    "nab":          "https://upload.wikimedia.org/wikipedia/commons/0/04/National_Australia_Bank_logo.svg",
+    "anz":          "https://upload.wikimedia.org/wikipedia/commons/1/13/ANZ_logo_logotype.svg",
+    "westpac":      "https://upload.wikimedia.org/wikipedia/commons/5/52/Westpac_logo.svg",
+    "commbank":     "https://upload.wikimedia.org/wikipedia/commons/2/29/Commonwealth_Bank_Logo.svg",
+    # Middle East / Africa
+    "fnb":          "https://upload.wikimedia.org/wikipedia/commons/4/4a/First_National_Bank_Logo.png",
+    "standard bank":"https://upload.wikimedia.org/wikipedia/commons/2/29/Standard_Bank_Logo.svg",
+    # Other
+    "inter":        "https://upload.wikimedia.org/wikipedia/commons/8/8e/Banco_Inter_logo.svg",
+    "ccb":          "https://upload.wikimedia.org/wikipedia/commons/1/10/China_Construction_Bank_Logo.svg",
+    "icbc":         "https://upload.wikimedia.org/wikipedia/commons/d/d8/ICBC_logo.svg",
+    "scb":          "https://upload.wikimedia.org/wikipedia/commons/3/3d/Standard_Chartered_%28logo%29.svg",
+    "umb":          "https://upload.wikimedia.org/wikipedia/commons/e/e3/UMB_Financial_Corporation_logo.png",
+}
+
 ARTIST_KEYWORDS = [
     "taylor swift", "beyonce", "beyoncé", "drake", "ed sheeran", "ariana grande",
     "the weeknd", "justin bieber", "bad bunny", "harry styles", "billie eilish",
@@ -1324,7 +1397,12 @@ def build_graph(results, brand_images=None):
                 continue
             b_id = get_id("brand", b)
             page_img = (brand_images or {}).get(b, "")
-            brand_image_url = f"/page-images/{page_img}" if page_img else f"/avatar/brand/{b_id}.svg"
+            if page_img:
+                brand_image_url = f"/page-images/{page_img}"
+            elif b in BRAND_LOGO_MAP:
+                brand_image_url = BRAND_LOGO_MAP[b]
+            else:
+                brand_image_url = f"/avatar/brand/{b_id}.svg"
             G.add_node(
                 b_id,
                 type="brand",
