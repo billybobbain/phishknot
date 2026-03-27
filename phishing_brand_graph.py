@@ -979,7 +979,13 @@ def get_artist_popularity(token, artist_name, cache):
     """
     key = artist_name.lower().strip()
     if key in cache:
-        return cache[key]
+        entry = cache[key]
+        # None means artist was searched and not found — don't retry.
+        # A dict with no image_url is a stale entry; fall through to re-fetch.
+        if entry is None:
+            return None
+        if isinstance(entry, dict) and entry.get("image_url"):
+            return entry
     time.sleep(0.2)
     result = spotify_search_artist(token, artist_name)
     if result is None:
