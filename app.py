@@ -855,19 +855,18 @@ def _babbleknot_layout(H):
         return nx.spring_layout(H, k=2.0, seed=42, iterations=100)
 
     # Pixel scale: heavy anchors spread over ~2000px canvas; light nodes in rings around them
-    ANCHOR_SCALE = 900   # px between heavy nodes
-    CLUSTER_RADIUS = 160  # base px radius of light-node rings; grows with cluster size
+    ANCHOR_SCALE = 700   # radius of the heavy-node circle in px
+    CLUSTER_RADIUS = 120  # base px radius of light-node rings; grows with sqrt(cluster size)
 
-    # Layout heavy nodes among themselves — high k = lots of space between anchors
-    H_heavy = H.subgraph(heavy)
+    # Place heavy nodes evenly on a circle — spring layout clumps them because
+    # they're densely connected; a forced circle spreads them as real anchors.
     n = len(heavy)
-    k = max(2.5, 4.0 / math.sqrt(n))
     if n == 1:
         pos[heavy[0]] = (0.0, 0.0)
     else:
-        raw = nx.spring_layout(H_heavy, k=k, seed=42, iterations=300)
-        for node, (x, y) in raw.items():
-            pos[node] = (x * ANCHOR_SCALE, y * ANCHOR_SCALE)
+        for i, node in enumerate(heavy):
+            angle = 2 * math.pi * i / n
+            pos[node] = (math.cos(angle) * ANCHOR_SCALE, math.sin(angle) * ANCHOR_SCALE)
 
     # Position each light node near the centroid of its heavy neighbors
     rng = random.Random(42)
