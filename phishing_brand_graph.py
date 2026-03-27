@@ -971,15 +971,15 @@ def spotify_search_artist(token, artist_name):
     }
 
 
-def get_artist_popularity(client_id, client_secret, artist_name, cache):
+def get_artist_popularity(token, artist_name, cache):
     """
     Get artist popularity from Spotify, using cache.
+    token: already-fetched OAuth token (fetch once per pipeline run, not per artist).
     Returns dict with name, popularity, spotify_id or None if not found.
     """
     key = artist_name.lower().strip()
     if key in cache:
         return cache[key]
-    token = get_spotify_token(client_id, client_secret)
     time.sleep(0.2)
     result = spotify_search_artist(token, artist_name)
     if result is None:
@@ -1474,8 +1474,16 @@ def main():
     client_id = os.environ.get("SPOTIFY_CLIENT_ID", "")
     client_secret = os.environ.get("SPOTIFY_CLIENT_SECRET", "")
     use_spotify = bool(client_id and client_secret)
+    spotify_token = None
     if not use_spotify:
         print("SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET not set; artist popularity will be missing.")
+    else:
+        try:
+            spotify_token = get_spotify_token(client_id, client_secret)
+            print("Spotify token obtained.")
+        except Exception as e:
+            print(f"Spotify token fetch failed: {e}; artist images will be missing.")
+            use_spotify = False
 
     if NO_DOWNLOAD:
         print("NO_DOWNLOAD=True: will not fetch phishing page content (feed-only, safe mode).")
@@ -1544,7 +1552,7 @@ def main():
             artists = []
             for ak in artist_keys:
                 if use_spotify:
-                    a = get_artist_popularity(client_id, client_secret, ak, spotify_cache)
+                    a = get_artist_popularity(spotify_token, ak, spotify_cache)
                     if a:
                         artists.append(a)
                     else:
@@ -1583,7 +1591,7 @@ def main():
         artists = []
         for ak in artist_keys:
             if use_spotify:
-                a = get_artist_popularity(client_id, client_secret, ak, spotify_cache)
+                a = get_artist_popularity(spotify_token, ak, spotify_cache)
                 if a:
                     artists.append(a)
                 else:
