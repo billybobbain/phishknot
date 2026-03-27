@@ -810,9 +810,24 @@ def extract_visible_text(html):
 
 _TRACKER_PATTERNS = ("pixel", "track", "beacon", "1x1", "spacer", "blank", "transparent")
 
+_CSS_BG_RE = re.compile(r'background(?:-image)?\s*:[^;]*url\(\s*["\']?([^"\')\s]+)["\']?\s*\)', re.IGNORECASE)
+
+def _make_absolute(src, base_scheme, base_netloc, base_path):
+    """Resolve a potentially relative image URL to absolute."""
+    src = src.strip()
+    if src.startswith("//"):
+        return base_scheme + ":" + src
+    if src.startswith("/"):
+        return f"{base_scheme}://{base_netloc}{src}"
+    if not src.startswith("http"):
+        return f"{base_scheme}://{base_netloc}{base_path}/{src}"
+    return src
+
+
 def extract_page_hero_image(html, base_url):
     """
     Extract the most prominent image URL from a phishing page.
+    Tries in order: og:image meta, <img> tags, CSS background-image, favicon.
     Filters out trackers, tiny images, and data URIs.
     Returns an absolute URL or empty string.
     """
@@ -821,12 +836,23 @@ def extract_page_hero_image(html, base_url):
         parsed_base = urlparse(base_url)
         base_scheme = parsed_base.scheme or "https"
         base_netloc = parsed_base.netloc or ""
+        base_path = parsed_base.path.rsplit("/", 1)[0]
+
+        def is_bad(src):
+            if not src or src.startswith("data:"):
+                return True
+            return any(t in src.lower() for t in _TRACKER_PATTERNS)
+
+        # 1. og:image — phishing kits often copy this from the real brand site
+        for meta in soup.find_all("meta", property="og:image"):
+            src = (meta.get("content") or "").strip()
+            if not is_bad(src):
+                return _make_absolute(src, base_scheme, base_netloc, base_path)
+
+        # 2. Plain <img> tags — skip tiny/tracker images
         for img in soup.find_all("img", src=True):
             src = (img.get("src") or "").strip()
-            if not src or src.startswith("data:"):
-                continue
-            src_lower = src.lower()
-            if any(t in src_lower for t in _TRACKER_PATTERNS):
+            if is_bad(src):
                 continue
             try:
                 w = int(img.get("width") or 0)
@@ -835,15 +861,27 @@ def extract_page_hero_image(html, base_url):
                     continue
             except (ValueError, TypeError):
                 pass
-            # Resolve to absolute URL
-            if src.startswith("//"):
-                src = base_scheme + ":" + src
-            elif src.startswith("/"):
-                src = f"{base_scheme}://{base_netloc}{src}"
-            elif not src.startswith("http"):
-                path = parsed_base.path.rsplit("/", 1)[0]
-                src = f"{base_scheme}://{base_netloc}{path}/{src}"
-            return src
+            return _make_absolute(src, base_scheme, base_netloc, base_path)
+
+        # 3. CSS background-image in style attributes and <style> blocks
+        style_text = " ".join(
+            (tag.string or "") for tag in soup.find_all("style")
+        )
+        for el in soup.find_all(style=True):
+            style_text += " " + (el.get("style") or "")
+        for match in _CSS_BG_RE.finditer(style_text):
+            src = match.group(1).strip()
+            if not is_bad(src):
+                return _make_absolute(src, base_scheme, base_netloc, base_path)
+
+        # 4. Favicon as last resort — still visually identifies the spoofed brand
+        for link in soup.find_all("link", rel=True):
+            rels = [r.lower() for r in (link.get("rel") or [])]
+            if "icon" in rels or "shortcut icon" in rels:
+                src = (link.get("href") or "").strip()
+                if not is_bad(src):
+                    return _make_absolute(src, base_scheme, base_netloc, base_path)
+
     except Exception:
         pass
     return ""
