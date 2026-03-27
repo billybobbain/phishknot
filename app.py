@@ -329,13 +329,13 @@ def serve_interactive_graph():
       <div class="label">Layout</div>
       <div class="value">
         <select id="layoutMode">
+          <option value="preset" selected>Preset (server positions)</option>
           <option value="cose">CoSE (force-directed)</option>
           <option value="circle">Circle</option>
           <option value="concentric">Concentric</option>
           <option value="grid">Grid</option>
           <option value="breadthfirst">Breadthfirst</option>
           <option value="random">Random</option>
-          <option value="preset">Preset (server positions)</option>
         </select>
       </div>
     </div>
@@ -821,6 +821,69 @@ def graph_matches():
     return jsonify(matches)
 
 
+def _babbleknot_layout(H):
+    """
+    Two-tier layout inspired by babbleknot graph visualization:
+    - Heavy nodes (artist, brand) are laid out among themselves with high repulsion
+      so they spread far apart and act as visual anchors.
+    - Light nodes (phishing_url, domain) are positioned at the centroid of their
+      connected heavy neighbors, clustering tightly around the brands/artists they link.
+
+    Returns dict: node_id -> (x, y)
+    """
+    import networkx as nx
+    import math
+    import random
+
+    HEAVY = {"artist", "brand"}
+
+    heavy = [n for n in H.nodes() if (H.nodes[n] or {}).get("type") in HEAVY]
+    light = [n for n in H.nodes() if (H.nodes[n] or {}).get("type") not in HEAVY]
+
+    pos = {}
+
+    if not heavy:
+        return nx.spring_layout(H, k=2.0, seed=42, iterations=100)
+
+    # Layout heavy nodes among themselves — high k = lots of space between anchors
+    H_heavy = H.subgraph(heavy)
+    n = len(heavy)
+    k = max(2.5, 4.0 / math.sqrt(n))
+    if n == 1:
+        pos[heavy[0]] = (0.0, 0.0)
+    else:
+        pos.update(nx.spring_layout(H_heavy, k=k, seed=42, iterations=300))
+
+    # Position each light node near the centroid of its heavy neighbors
+    rng = random.Random(42)
+    # Count how many light nodes share each heavy-neighbor set so we can spread them out
+    centroid_counts = {}
+    for node in light:
+        heavy_nb = tuple(sorted(nb for nb in H.neighbors(node) if nb in pos))
+        centroid_counts[heavy_nb] = centroid_counts.get(heavy_nb, 0) + 1
+
+    centroid_idx = {}
+    for node in light:
+        heavy_nb = tuple(sorted(nb for nb in H.neighbors(node) if nb in pos))
+        if heavy_nb:
+            cx = sum(pos[nb][0] for nb in heavy_nb) / len(heavy_nb)
+            cy = sum(pos[nb][1] for nb in heavy_nb) / len(heavy_nb)
+        else:
+            # Orphan — place on outer ring
+            angle = rng.uniform(0, 2 * math.pi)
+            cx, cy = math.cos(angle) * 2.0, math.sin(angle) * 2.0
+
+        # Spread multiple light nodes around the same centroid in a small circle
+        count = centroid_counts.get(heavy_nb, 1)
+        idx = centroid_idx.get(heavy_nb, 0)
+        centroid_idx[heavy_nb] = idx + 1
+        spread = 0.12 * math.sqrt(count)
+        angle = (2 * math.pi * idx / max(count, 1)) + rng.uniform(-0.1, 0.1)
+        pos[node] = (cx + math.cos(angle) * spread, cy + math.sin(angle) * spread)
+
+    return pos
+
+
 @app.route("/graph/data")
 def graph_data():
     """
@@ -861,7 +924,7 @@ def graph_data():
             return jsonify({"title": title, "nodes": [], "edges": []})
 
         try:
-            pos = nx.spring_layout(H, k=1.8, seed=42, iterations=50)
+            pos = _babbleknot_layout(H)
         except Exception:
             pos = nx.random_layout(H, seed=42)
 
