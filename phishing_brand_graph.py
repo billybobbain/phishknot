@@ -60,7 +60,7 @@ KEYWORDS_JSON = OUTPUT_IMAGES_DIR / "keywords.json"
 MATCHES_JSON = OUTPUT_IMAGES_DIR / "matches.json"
 
 MAX_GEXF_NODES = 2000   # Cap nodes in GEXF so Gephi can layout; None = export full graph.
-MAX_URLS = 50
+MAX_URLS = int(os.environ.get("MAX_URLS", "50"))
 REQUEST_DELAY = 1.0
 
 # URL history: we keep every URL we've ever seen from feeds and process from this store (more URLs over time).
@@ -662,7 +662,7 @@ def _get_history_conn():
 
 
 def init_history_db():
-    """Create url_history table if it doesn't exist."""
+    """Create url_history table if it doesn't exist; migrate schema for older DBs."""
     conn = _get_history_conn()
     try:
         conn.execute("""
@@ -670,9 +670,15 @@ def init_history_db():
                 url TEXT PRIMARY KEY,
                 first_seen TEXT NOT NULL,
                 last_seen TEXT NOT NULL,
-                source TEXT NOT NULL
+                source TEXT NOT NULL,
+                processed_at TEXT
             )
         """)
+        # Migrate existing DBs that predate processed_at column.
+        try:
+            conn.execute("ALTER TABLE url_history ADD COLUMN processed_at TEXT")
+        except Exception:
+            pass  # Column already exists
         conn.commit()
     finally:
         conn.close()
@@ -691,7 +697,7 @@ def merge_urls_into_history(urls, source="openphish"):
             if not u:
                 continue
             conn.execute(
-                "INSERT INTO url_history (url, first_seen, last_seen, source) VALUES (?, ?, ?, ?) ON CONFLICT(url) DO UPDATE SET last_seen = excluded.last_seen, source = excluded.source",
+                "INSERT INTO url_history (url, first_seen, last_seen, source) VALUES (?, ?, ?, ?) ON CONFLICT(url) DO UPDATE SET last_seen = excluded.last_seen",
                 (u, now, now, source),
             )
             count += 1
@@ -702,20 +708,88 @@ def merge_urls_into_history(urls, source="openphish"):
 
 
 def get_urls_from_history(limit=None, since_days=None):
-    """Return list of URLs from history. since_days: only URLs with last_seen in last N days. limit: max count."""
+    """
+    Return list of URLs from history.
+    Prioritizes unprocessed URLs first, then least-recently-processed.
+    since_days: only URLs with last_seen in last N days.
+    limit: max count.
+    """
     conn = _get_history_conn()
     try:
         if since_days is not None:
             since = (datetime.now(timezone.utc) - timedelta(days=since_days)).isoformat().replace("+00:00", "Z")
-            query = "SELECT url FROM url_history WHERE last_seen >= ? ORDER BY last_seen DESC"
+            query = """
+                SELECT url FROM url_history
+                WHERE last_seen >= ?
+                ORDER BY
+                    CASE WHEN processed_at IS NULL THEN 0 ELSE 1 END,
+                    processed_at ASC,
+                    last_seen DESC
+            """
             cur = conn.execute(query, (since,))
         else:
-            cur = conn.execute("SELECT url FROM url_history ORDER BY last_seen DESC")
+            cur = conn.execute("""
+                SELECT url FROM url_history
+                ORDER BY
+                    CASE WHEN processed_at IS NULL THEN 0 ELSE 1 END,
+                    processed_at ASC,
+                    last_seen DESC
+            """)
         rows = cur.fetchall()
         urls = [r[0] for r in rows]
         if limit is not None:
             urls = urls[:limit]
         return urls
+    finally:
+        conn.close()
+
+
+def mark_urls_processed(urls):
+    """Stamp processed_at = now for a list of URLs that were attempted this run."""
+    if not urls:
+        return
+    conn = _get_history_conn()
+    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    try:
+        conn.executemany(
+            "UPDATE url_history SET processed_at = ? WHERE url = ?",
+            [(now, u) for u in urls if u],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_history_stats():
+    """Return a dict of statistics about the URL history database."""
+    conn = _get_history_conn()
+    try:
+        stats = {}
+        stats["total"] = conn.execute("SELECT COUNT(*) FROM url_history").fetchone()[0]
+        stats["processed"] = conn.execute("SELECT COUNT(*) FROM url_history WHERE processed_at IS NOT NULL").fetchone()[0]
+        stats["unprocessed"] = stats["total"] - stats["processed"]
+        rows = conn.execute(
+            "SELECT source, COUNT(*) as cnt FROM url_history GROUP BY source ORDER BY cnt DESC"
+        ).fetchall()
+        stats["by_source"] = {r[0]: r[1] for r in rows}
+        row = conn.execute("SELECT MIN(first_seen), MAX(first_seen) FROM url_history").fetchone()
+        stats["first_seen_min"] = row[0] or ""
+        stats["first_seen_max"] = row[1] or ""
+        row = conn.execute("SELECT MIN(last_seen), MAX(last_seen) FROM url_history").fetchone()
+        stats["last_seen_min"] = row[0] or ""
+        stats["last_seen_max"] = row[1] or ""
+        row = conn.execute("SELECT MIN(processed_at), MAX(processed_at) FROM url_history WHERE processed_at IS NOT NULL").fetchone()
+        stats["processed_at_min"] = row[0] or ""
+        stats["processed_at_max"] = row[1] or ""
+        # URLs seen in last 24h / 7d
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        since_24h = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat().replace("+00:00", "Z")
+        since_7d = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat().replace("+00:00", "Z")
+        stats["seen_last_24h"] = conn.execute("SELECT COUNT(*) FROM url_history WHERE last_seen >= ?", (since_24h,)).fetchone()[0]
+        stats["seen_last_7d"] = conn.execute("SELECT COUNT(*) FROM url_history WHERE last_seen >= ?", (since_7d,)).fetchone()[0]
+        stats["new_last_24h"] = conn.execute("SELECT COUNT(*) FROM url_history WHERE first_seen >= ?", (since_24h,)).fetchone()[0]
+        stats["new_last_7d"] = conn.execute("SELECT COUNT(*) FROM url_history WHERE first_seen >= ?", (since_7d,)).fetchone()[0]
+        return stats
     finally:
         conn.close()
 
@@ -1787,6 +1861,10 @@ def main():
 
     if use_spotify:
         save_spotify_cache(spotify_cache)
+
+    if USE_URL_HISTORY:
+        mark_urls_processed(to_process)
+        print(f"Marked {len(to_process)} URLs as processed in history.")
 
     # Build brand_images: first cached page image found per brand (first-wins across all results).
     brand_images = {}

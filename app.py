@@ -109,6 +109,17 @@ def health():
     return "ok", 200
 
 
+@app.route("/history")
+def history_stats():
+    """URL history database statistics — totals, by source, processed vs unprocessed, date ranges."""
+    try:
+        from phishing_brand_graph import get_history_stats
+        stats = get_history_stats()
+        return jsonify(stats)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/debug")
 def debug():
     """Persistence check: confirm OUTPUT_DIR is set and volume files exist. Use to debug data loss on restart."""
