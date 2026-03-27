@@ -247,6 +247,11 @@ def serve_interactive_graph():
   .pill { border: 1px solid var(--border); background: rgba(0,0,0,0.15); padding: 6px 10px; border-radius: 999px; font-size: 12px; color: var(--muted); white-space: nowrap; }
   .btn { cursor: pointer; border: 1px solid var(--border); background: rgba(255,255,255,0.06); color: var(--text); padding: 8px 10px; border-radius: 10px; font-size: 13px; }
   .btn:hover { background: rgba(255,255,255,0.09); }
+  .lens-group { display: flex; gap: 0; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+  .lens-btn { flex: 1; cursor: pointer; border: none; border-right: 1px solid var(--border); background: rgba(255,255,255,0.04); color: var(--muted); padding: 7px 0; font-size: 12px; }
+  .lens-btn:last-child { border-right: none; }
+  .lens-btn:hover { background: rgba(255,255,255,0.09); color: var(--text); }
+  .lens-btn.active { background: rgba(99,140,255,0.22); color: #a8bfff; font-weight: 600; }
   .layout { display: grid; grid-template-columns: 360px 1fr; min-height: calc(100vh - 52px); }
   @media (max-width: 980px) { .layout { grid-template-columns: 1fr; } }
   .panel { border-right: 1px solid var(--border); background: var(--panel); padding: 12px; overflow: auto; }
@@ -323,6 +328,16 @@ def serve_interactive_graph():
       <div class="label">Max nodes</div>
       <div class="value">
         <input id="maxNodes" type="number" min="10" max="2000" step="10" value="200" />
+      </div>
+    </div>
+    <div class="field">
+      <div class="label">Lens</div>
+      <div class="value">
+        <div class="lens-group">
+          <button class="lens-btn active" data-lens="both" type="button">Both</button>
+          <button class="lens-btn" data-lens="artist" type="button">Artist</button>
+          <button class="lens-btn" data-lens="brand" type="button">Brand</button>
+        </div>
       </div>
     </div>
     <div class="field">
@@ -417,6 +432,11 @@ function setError(msg){
   e.textContent = msg || "";
 }
 
+function currentLens(){
+  const active = document.querySelector(".lens-btn.active");
+  return active ? active.dataset.lens : "both";
+}
+
 function buildQuery(){
   const coEl = el("coToggle");
   const viewEl = el("viewMode");
@@ -426,7 +446,8 @@ function buildQuery(){
   const view = viewEl ? viewEl.value : "brand_artist";
   const maxNodesRaw = maxNodesEl ? maxNodesEl.value : "200";
   const maxNodes = Math.max(10, parseInt(maxNodesRaw || "200", 10));
-  const params = new URLSearchParams({ co, view, max_nodes: String(maxNodes) });
+  const lens = currentLens();
+  const params = new URLSearchParams({ co, view, max_nodes: String(maxNodes), lens });
   return params.toString();
 }
 
@@ -591,16 +612,16 @@ function renderGraph(data){
       selector: "node",
       style: {
         "shape": "ellipse",
-        "width": "mapData(degree, 0, 20, 44, 92)",
-        "height": "mapData(degree, 0, 20, 44, 92)",
+        "width": "data(size)",
+        "height": "data(size)",
         "background-color": (ele) => bgColor(ele.data("type")),
         "background-image": "data(image_url)",
         "background-fit": "cover",
-        "border-width": 3,
+        "border-width": (ele) => ele.data("is_anchor") ? 4 : 2,
         "border-color": (ele) => borderColor(ele.data("type")),
         "label": "data(label)",
         "color": "rgba(231,236,255,0.92)",
-        "font-size": 12,
+        "font-size": "data(font_size)",
         "text-valign": "bottom",
         "text-halign": "center",
         "text-margin-y": 12,
@@ -675,6 +696,13 @@ async function refreshAll(){
 
 const refreshBtn = el("refreshBtn");
 if (refreshBtn) refreshBtn.addEventListener("click", refreshAll);
+document.querySelectorAll(".lens-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".lens-btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    refreshAll();
+  });
+});
 const coToggle = el("coToggle");
 if (coToggle) coToggle.addEventListener("change", refreshAll);
 const viewMode = el("viewMode");
@@ -830,21 +858,20 @@ def graph_matches():
     return jsonify(matches)
 
 
-def _babbleknot_layout(H):
+def _babbleknot_layout(H, anchor_types=None):
     """
     Two-tier layout inspired by babbleknot graph visualization:
-    - Heavy nodes (artist, brand) are laid out among themselves with high repulsion
-      so they spread far apart and act as visual anchors.
-    - Light nodes (phishing_url, domain) are positioned at the centroid of their
-      connected heavy neighbors, clustering tightly around the brands/artists they link.
+    - Anchor nodes (default: artist + brand) are evenly spaced on a circle as visual anchors.
+    - Light nodes (everything else) cluster around the centroid of their connected anchors.
 
+    anchor_types: set of node type strings to treat as anchors (default {"artist","brand"})
     Returns dict: node_id -> (x, y)
     """
     import networkx as nx
     import math
     import random
 
-    HEAVY = {"artist", "brand"}
+    HEAVY = anchor_types if anchor_types is not None else {"artist", "brand"}
 
     heavy = [n for n in H.nodes() if (H.nodes[n] or {}).get("type") in HEAVY]
     light = [n for n in H.nodes() if (H.nodes[n] or {}).get("type") not in HEAVY]
@@ -905,9 +932,14 @@ def graph_data():
       - co=0|1: choose dataset (phishing_graph.gexf vs co_occurrence.gexf when available)
       - view=brand_artist|focus
       - max_nodes=int
+      - lens=both|artist|brand  (which node type acts as anchor)
     """
     co = (request.args.get("co", "0") or "0").lower() in ("1", "true", "yes")
     view = (request.args.get("view", "brand_artist") or "brand_artist").strip()
+    lens = (request.args.get("lens", "both") or "both").strip().lower()
+    if lens not in ("artist", "brand"):
+        lens = "both"
+    anchor_types = {"artist"} if lens == "artist" else {"brand"} if lens == "brand" else {"artist", "brand"}
     try:
         max_nodes = int(request.args.get("max_nodes", "200"))
     except Exception:
@@ -937,7 +969,7 @@ def graph_data():
             return jsonify({"title": title, "nodes": [], "edges": []})
 
         try:
-            pos = _babbleknot_layout(H)
+            pos = _babbleknot_layout(H, anchor_types=anchor_types)
         except Exception:
             pos = nx.random_layout(H, seed=42)
 
@@ -961,10 +993,24 @@ def graph_data():
                     # domain, url, or other: use type-based avatar so Cytoscape never gets empty background-image.
                     img = f"/avatar/{n_type or 'node'}/{str(n)}.svg"
             img = _proxify_spotify_image_url(img)
+            is_anchor = n_type in anchor_types
+            # Size: anchors large + readable, domain medium, url/other small
+            if is_anchor:
+                node_size = 80
+                node_font_size = 14
+            elif n_type == "domain":
+                node_size = 44
+                node_font_size = 11
+            else:
+                node_size = 34
+                node_font_size = 10
             nodes.append({
                 "id": str(n),
                 "label": label,
                 "type": n_type,
+                "is_anchor": is_anchor,
+                "size": node_size,
+                "font_size": node_font_size,
                 "domain": data.get("domain", ""),
                 "full_url": data.get("full_url", ""),
                 "popularity": data.get("popularity", 0),
