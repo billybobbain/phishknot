@@ -76,7 +76,7 @@ USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; rv:109.0) Gecko/20100101 Firefox/115
 # Safety: skip fetching phishing page content entirely (only use OpenPhish URL list).
 # Override with env: NO_DOWNLOAD=0 to fetch page content (e.g. in Docker).
 NO_DOWNLOAD = os.environ.get("NO_DOWNLOAD", "true").lower() not in ("0", "false", "no")
-MAX_RESPONSE_BYTES = 512 * 1024  # Cap HTML size (512 KB) to limit parser exposure.
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024  # Cap HTML size (2 MB) to limit parser exposure.
 MAX_REDIRECTS = 3
 
 # Proxy support (optional). Set PROXY_LIST_URL to a Webshare-style newline-separated
@@ -989,7 +989,7 @@ def fetch_phishtank_urls():
 
 
 def download_page(url):
-    """Download HTML for a URL; return (status_ok, html_text). Size and redirects limited."""
+    """Download HTML for a URL; return (status_ok, html_text, truncated). Size and redirects limited."""
     try:
         session = requests.Session()
         session.max_redirects = MAX_REDIRECTS
@@ -1006,19 +1006,21 @@ def download_page(url):
         # Cap bytes read so we never load huge or maliciously large bodies
         chunks = []
         total = 0
+        truncated = False
         for chunk in r.iter_content(chunk_size=8192):
             if chunk:
                 total += len(chunk)
                 if total > MAX_RESPONSE_BYTES:
+                    truncated = True
                     break
                 chunks.append(chunk)
         body = b"".join(chunks)
         try:
-            return True, body.decode("utf-8", errors="replace")
+            return True, body.decode("utf-8", errors="replace"), truncated
         except Exception:
-            return False, ""
+            return False, "", False
     except Exception:
-        return False, ""
+        return False, "", False
 
 
 def extract_visible_text(html):
@@ -2186,12 +2188,16 @@ def main():
                     "match_detail": match_detail,
                 })
             continue
-        ok, html = download_page(url)
+        ok, html, truncated = download_page(url)
         if not ok:
             counts["download_failed"] += 1
             continue
+        if truncated:
+            print(f"  response truncated at {MAX_RESPONSE_BYTES // 1024}KB: {url[:80]}")
         text = extract_visible_text(html)
         match_detail = _compute_match_details(url, text=text)
+        match_detail["response_truncated"] = truncated
+        match_detail["response_bytes"] = len(html.encode("utf-8", errors="replace"))
         hero_img_url = extract_page_hero_image(html, url)
         page_image_file = ""
         if hero_img_url:
