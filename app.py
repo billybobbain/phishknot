@@ -741,6 +741,25 @@ function colorForType(t){
 
 let _serverPos = {};  // server-computed babbleknot positions, keyed by node id
 
+function layoutCompoundChildren() {
+  if (!cy) return;
+  cy.nodes('[type="registered_domain"]').forEach(parent => {
+    const children = parent.children().filter(':visible');
+    if (children.length === 0) return;
+    const n = children.length;
+    const radius = Math.max(40, n * 18);
+    const cx = parent.position('x');
+    const cy_y = parent.position('y');
+    children.forEach((child, i) => {
+      const angle = (2 * Math.PI * i / n) - Math.PI / 2;
+      child.position({
+        x: cx + radius * Math.cos(angle),
+        y: cy_y + radius * Math.sin(angle),
+      });
+    });
+  });
+}
+
 function getLayoutOpts(){
   const layoutEl = el("layoutMode");
   const name = (layoutEl && layoutEl.value) ? layoutEl.value : "preset";
@@ -902,7 +921,9 @@ function renderGraph(data){
       cy.elements().remove();
       cy.add(elements);
     });
-    cy.layout(layoutOpts).run();
+    const l = cy.layout(layoutOpts);
+    l.one('layoutstop', layoutCompoundChildren);
+    l.run();
     return;
   }
 
@@ -913,6 +934,7 @@ function renderGraph(data){
     style: cyStyle,
     layout: layoutOpts,
   });
+  cy.one('layoutstop', layoutCompoundChildren);
 
   cy.on("tap", "node", (evt) => {
     const node = evt.target;
