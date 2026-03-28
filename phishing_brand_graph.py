@@ -1361,21 +1361,31 @@ def get_kit_families(hamming_threshold: int = 6) -> dict:
 # -----------------------------------------------------------------------------
 # Keyword matching
 # -----------------------------------------------------------------------------
+def _whole_word_match(keyword, text):
+    """Return True if keyword appears as a whole word in text (word-boundary match)."""
+    try:
+        return bool(re.search(r'(?<![a-z0-9])' + re.escape(keyword) + r'(?![a-z0-9])', text))
+    except Exception:
+        return keyword in text
+
+
 def find_brands_in_text(text):
-    """Return set of brand keywords found in text (lowercase)."""
+    """Return set of brand keywords found in text (lowercase) using whole-word matching.
+    Whole-word prevents 'ing' matching 'phishing', 'nab' matching 'unable', etc."""
     found = set()
     for b in BRAND_KEYWORDS:
-        if b in text:
+        if _whole_word_match(b, text):
             found.add(b)
     return found
 
 
 def find_artists_in_text(text):
-    """Return set of artist keywords found in text (lowercase). Uses static + Last.fm combined list if set."""
+    """Return set of artist keywords found in text (lowercase) using whole-word matching.
+    Uses static + Last.fm combined list if set."""
     artist_list = _artist_keywords_combined if _artist_keywords_combined is not None else ARTIST_KEYWORDS
     found = set()
     for a in artist_list:
-        if a in text:
+        if _whole_word_match(a, text):
             found.add(a)
     return found
 
