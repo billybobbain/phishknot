@@ -1056,7 +1056,7 @@ refreshAll().then(() => {
       c => c.textContent.trim().toLowerCase() === focusArtist.toLowerCase()
     );
     if (chip) chip.click();
-    if (cy && cy.elements().length > 0) cy.layout(getLayoutOpts()).run();
+    if (cy && cy.elements().length > 0) { cy.layout(getLayoutOpts()).run(); cy.fit(undefined, 60); }
   }
 });
 </script>
