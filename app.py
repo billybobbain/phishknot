@@ -241,22 +241,26 @@ def serve_interactive_graph():
   body { margin: 0; padding: 0; min-height: 100vh; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
-  header { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 12px; padding: 10px 12px; background: rgba(17,26,51,0.92); backdrop-filter: blur(10px); border-bottom: 1px solid var(--border); }
-  header .left { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }
-  header .right { display: flex; align-items: center; gap: 10px; }
-  .pill { border: 1px solid var(--border); background: rgba(0,0,0,0.15); padding: 6px 10px; border-radius: 999px; font-size: 12px; color: var(--muted); white-space: nowrap; }
-  .btn { cursor: pointer; border: 1px solid var(--border); background: rgba(255,255,255,0.06); color: var(--text); padding: 8px 10px; border-radius: 10px; font-size: 13px; }
+  header { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: rgba(11,16,32,0.96); backdrop-filter: blur(10px); border-bottom: 1px solid var(--border); height: 48px; }
+  .logo { font-size: 17px; font-weight: 700; letter-spacing: -0.01em; color: var(--text); white-space: nowrap; }
+  .logo span { color: var(--accent); }
+  header .stats { display: flex; align-items: center; gap: 6px; flex: 1; flex-wrap: wrap; }
+  header .right { display: flex; align-items: center; gap: 8px; }
+  .pill { border: 1px solid var(--border); background: rgba(0,0,0,0.15); padding: 4px 10px; border-radius: 999px; font-size: 11px; color: var(--muted); white-space: nowrap; }
+  .pill strong { color: var(--text); }
+  .btn { cursor: pointer; border: 1px solid var(--border); background: rgba(255,255,255,0.06); color: var(--text); padding: 6px 10px; border-radius: 8px; font-size: 13px; }
   .btn:hover { background: rgba(255,255,255,0.09); }
   .lens-group { display: flex; gap: 0; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
   .lens-btn { flex: 1; cursor: pointer; border: none; border-right: 1px solid var(--border); background: rgba(255,255,255,0.04); color: var(--muted); padding: 7px 0; font-size: 12px; }
   .lens-btn:last-child { border-right: none; }
   .lens-btn:hover { background: rgba(255,255,255,0.09); color: var(--text); }
   .lens-btn.active { background: rgba(99,140,255,0.22); color: #a8bfff; font-weight: 600; }
-  .layout { display: grid; grid-template-columns: 360px 1fr; min-height: calc(100vh - 52px); }
-  @media (max-width: 980px) { .layout { grid-template-columns: 1fr; } }
-  .panel { border-right: 1px solid var(--border); background: var(--panel); padding: 12px; overflow: auto; }
-  @media (max-width: 980px) { .panel { border-right: none; border-bottom: 1px solid var(--border); } }
-  .panel h2 { margin: 8px 0 10px; font-size: 14px; letter-spacing: 0.02em; color: var(--muted); text-transform: uppercase; }
+  .layout { display: grid; grid-template-columns: 280px 1fr; min-height: calc(100vh - 48px); transition: grid-template-columns 0.25s ease; }
+  .layout.panel-collapsed { grid-template-columns: 0px 1fr; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+  .panel { border-right: 1px solid var(--border); background: var(--panel); padding: 12px; overflow: auto; transition: padding 0.25s; }
+  .layout.panel-collapsed .panel { padding: 0; overflow: hidden; }
+  .panel h2 { margin: 8px 0 10px; font-size: 12px; letter-spacing: 0.06em; color: var(--muted); text-transform: uppercase; }
   .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   .field { width: 100%; display: grid; grid-template-columns: 140px 1fr; gap: 10px; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
   .label { color: var(--muted); font-size: 13px; }
@@ -277,9 +281,8 @@ def serve_interactive_graph():
   table { width: 100%; border-collapse: collapse; font-size: 12px; }
   th, td { border-bottom: 1px solid rgba(255,255,255,0.08); padding: 6px 4px; vertical-align: top; }
   th { color: var(--muted); font-weight: 600; text-align: left; }
-  .graph { width: 100%; min-height: calc(100vh - 52px); background: #0a0f1f; }
-  /* Cytoscape container should fill available space */
-  #graph { width: 100%; height: calc(100vh - 52px); }
+  .graph { width: 100%; min-height: calc(100vh - 48px); background: #0a0f1f; }
+  #graph { width: 100%; height: calc(100vh - 48px); }
   .legend { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
   .chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.12); padding: 4px 8px; border-radius: 999px; font-size: 12px; color: var(--muted); }
   .match-card { border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; background: rgba(0,0,0,0.12); }
@@ -305,15 +308,17 @@ def serve_interactive_graph():
 </head>
 <body>
 <header>
-  <div class="left">
-    <a class="btn" href="/">&larr; Back</a>
-    <a class="pill" href="https://phishknot-production.up.railway.app/" target="_blank" rel="noreferrer">Prod static URL</a>
-    <a class="pill" href="https://phishknot-production.up.railway.app/graph/interactive" target="_blank" rel="noreferrer">Prod interactive URL</a>
-    <div id="status" class="pill">Loading…</div>
-    <div id="summary" class="pill">—</div>
+  <button id="panelToggle" class="btn" type="button" title="Toggle controls">☰</button>
+  <div class="logo">Phish<span>Knot</span></div>
+  <div class="stats">
+    <div id="statBrands" class="pill">Brands: —</div>
+    <div id="statArtists" class="pill">Artists: —</div>
+    <div id="statUrls" class="pill">URLs: —</div>
+    <div id="statRun" class="pill">Run: —</div>
+    <div id="status" class="pill" style="display:none">Loading…</div>
   </div>
   <div class="right">
-    <button id="refreshBtn" class="btn" type="button">Refresh</button>
+    <button id="refreshBtn" class="btn" type="button">↺ Refresh</button>
   </div>
 </header>
 <div class="layout">
@@ -482,12 +487,19 @@ async function fetchJSON(url){
 }
 
 function renderMeta(meta){
-  el("status").textContent = `Updated: ${meta.generated_at_utc || "unknown"}`;
   const rs = meta.run_stats || {};
   const ds = meta.display_stats || {};
   const img = meta.image_summary || {};
-  el("summary").textContent =
-    `Display ${ds.display_nodes ?? "?"} nodes • Full ${rs.full_nodes ?? "?"} nodes / ${rs.full_edges ?? "?"} edges`;
+  const counts = meta.counts || {};
+  // Header stat pills
+  const sb = el("statBrands"); if (sb) sb.innerHTML = `<strong>${rs.brands_count ?? "?"}</strong> brands`;
+  const sa = el("statArtists"); if (sa) sa.innerHTML = `<strong>${rs.artists_count ?? "?"}</strong> artists`;
+  const su = el("statUrls"); if (su) su.innerHTML = `<strong>${counts.urls_processed ?? "?"}</strong> URLs`;
+  const sr = el("statRun");
+  if (sr && meta.generated_at_utc) {
+    const d = new Date(meta.generated_at_utc);
+    sr.innerHTML = `Run: <strong>${d.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}</strong>`;
+  }
 
   el("runSummary").innerHTML = `
     <div><b>Dataset</b>: ${meta.dataset_label || "—"}</div>
@@ -822,7 +834,7 @@ function handleChipClick(nodeId, colorClass, chip) {
 async function refreshAll(){
   try {
     setError("");
-    el("status").textContent = "Loading…";
+    const statusEl = el("status"); if (statusEl) { statusEl.style.display=""; statusEl.textContent = "Loading…"; }
     const q = buildQuery();
     const meta = await fetchJSON(`/graph/meta?${q}`);
     const data = await fetchJSON(`/graph/data?${q}`);
@@ -836,12 +848,21 @@ async function refreshAll(){
     _activeChipId = null;
     if (cy) cy.elements().style("opacity", 1);
     buildNodeChips(data.nodes || []);
+    const statusEl2 = el("status"); if (statusEl2) statusEl2.style.display = "none";
   } catch (e) {
     setError(`Failed to load graph data: ${e.message}`);
-    el("status").textContent = "Error";
+    const statusEl3 = el("status"); if (statusEl3) { statusEl3.style.display=""; statusEl3.textContent = "Error"; }
   }
 }
 
+const panelToggle = el("panelToggle");
+if (panelToggle) panelToggle.addEventListener("click", () => {
+  const layout = document.querySelector(".layout");
+  if (layout) {
+    layout.classList.toggle("panel-collapsed");
+    if (cy) cy.resize();
+  }
+});
 const refreshBtn = el("refreshBtn");
 if (refreshBtn) refreshBtn.addEventListener("click", refreshAll);
 document.querySelectorAll(".lens-btn").forEach(btn => {
