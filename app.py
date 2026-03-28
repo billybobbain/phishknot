@@ -112,6 +112,139 @@ def health():
     return "ok", 200
 
 
+@app.route("/campaigns")
+def campaigns_page():
+    """Campaign gallery — one card per artist showing co-mentioned brands and URL count."""
+    return """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PhishKnot — Campaigns</title>
+<style>
+  :root { --bg:#0b1020; --panel:#111a33; --text:#e7ecff; --muted:#aab4de; --border:rgba(255,255,255,0.12); --accent:#7aa2ff; --brand:#2ecc71; --artist:#e67e22; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; min-height: 100vh; }
+  header { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: rgba(11,16,32,0.96); backdrop-filter: blur(10px); border-bottom: 1px solid var(--border); height: 48px; }
+  .logo { font-size: 17px; font-weight: 700; color: var(--text); text-decoration: none; }
+  .logo span { color: var(--accent); }
+  nav a { font-size: 13px; color: var(--muted); text-decoration: none; padding: 4px 10px; border-radius: 8px; }
+  nav a:hover { color: var(--text); background: rgba(255,255,255,0.06); }
+  .page { max-width: 1100px; margin: 0 auto; padding: 24px 16px; }
+  h1 { font-size: 22px; font-weight: 700; margin: 0 0 4px; }
+  .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .card-header { display: flex; align-items: center; gap: 12px; }
+  .avatar { width: 52px; height: 52px; border-radius: 999px; object-fit: cover; border: 2px solid var(--artist); flex-shrink: 0; background: rgba(230,126,34,0.15); }
+  .card-title { font-size: 16px; font-weight: 600; }
+  .card-stats { font-size: 11px; color: var(--muted); }
+  .brands { display: flex; flex-wrap: wrap; gap: 4px; }
+  .brand-tag { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: rgba(46,204,113,0.15); color: var(--brand); border: 1px solid rgba(46,204,113,0.25); }
+  .explore-btn { margin-top: auto; display: inline-block; text-align: center; padding: 8px 0; border-radius: 8px; background: rgba(122,162,255,0.12); color: var(--accent); font-size: 13px; text-decoration: none; border: 1px solid rgba(122,162,255,0.2); transition: background 0.15s; }
+  .explore-btn:hover { background: rgba(122,162,255,0.22); }
+  #loading { color: var(--muted); font-size: 14px; padding: 40px 0; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <a class="logo" href="/">Phish<span>Knot</span></a>
+  <nav>
+    <a href="/graph/interactive">Graph</a>
+    <a href="/campaigns">Campaigns</a>
+  </nav>
+</header>
+<div class="page">
+  <h1>Campaigns</h1>
+  <div class="subtitle" id="subtitle">Loading campaign data…</div>
+  <div class="grid" id="grid"><div id="loading">Loading…</div></div>
+</div>
+<script>
+async function load() {
+  const resp = await fetch("/campaigns/data");
+  const data = await resp.json();
+  const campaigns = data.campaigns || [];
+  const subtitle = document.getElementById("subtitle");
+  const grid = document.getElementById("grid");
+  subtitle.textContent = `${campaigns.length} artist-led campaign${campaigns.length !== 1 ? "s" : ""} detected across ${data.total_brands || "?"} brands`;
+  if (!campaigns.length) { grid.innerHTML = "<div style='color:var(--muted)'>No campaigns found. Run the pipeline with NO_DOWNLOAD=0 to detect campaigns.</div>"; return; }
+  grid.innerHTML = campaigns.map(c => {
+    const img = c.image_url ? `<img class="avatar" src="${c.image_url}" alt="${c.label}" onerror="this.style.display='none'">` : `<div class="avatar" style="display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px;color:var(--artist)">${(c.label||"?")[0].toUpperCase()}</div>`;
+    const brands = (c.brands || []).map(b => `<span class="brand-tag">${b}</span>`).join("");
+    const stats = `${c.url_count} URL${c.url_count !== 1 ? "s" : ""} · ${c.brand_count} brand${c.brand_count !== 1 ? "s" : ""}`;
+    return `<div class="card">
+      <div class="card-header">${img}<div><div class="card-title">${c.label}</div><div class="card-stats">${stats}</div></div></div>
+      <div class="brands">${brands || "<span style='color:var(--muted);font-size:11px'>No brands</span>"}</div>
+      <a class="explore-btn" href="/graph/interactive">Explore →</a>
+    </div>`;
+  }).join("");
+}
+load().catch(e => { document.getElementById("grid").innerHTML = `<div style='color:#ffb3b3'>Error: ${e.message}</div>`; });
+</script>
+</body>
+</html>"""
+
+
+@app.route("/campaigns/data")
+def campaigns_data():
+    """Return per-artist campaign summaries from the current graph."""
+    co = (request.args.get("co", "1") or "1").lower() in ("1", "true", "yes")
+    gexf_path = _pick_dataset_gexf(co)
+    G = _load_graph_from_gexf(gexf_path)
+    if G is None:
+        return jsonify({"campaigns": [], "total_brands": 0})
+
+    try:
+        import networkx as nx
+        from phishing_brand_graph import _brand_artist_subgraph
+        spotify_cache = _load_spotify_image_cache()
+        H = _brand_artist_subgraph(G, max_nodes=2000)
+
+        campaigns = []
+        brand_set = set()
+        for n in H.nodes():
+            data = H.nodes[n] or {}
+            if data.get("type") != "artist":
+                continue
+            label = data.get("label") or str(n)
+            img = data.get("image_url") or ""
+            if not img:
+                s_img = _spotify_image_for_label(spotify_cache, label)
+                img = s_img or f"/avatar/artist/{n}.svg"
+            img = _proxify_spotify_image_url(img)
+
+            neighbors = list(H.neighbors(n))
+            brands = sorted(set(
+                (H.nodes[nb] or {}).get("label") or str(nb)
+                for nb in neighbors
+                if (H.nodes[nb] or {}).get("type") == "brand"
+            ))
+            brand_set.update(brands)
+
+            # Count URLs from original graph that connect to this artist
+            url_count = 0
+            if n in G:
+                for nb in G.predecessors(n) if G.is_directed() else G.neighbors(n):
+                    if (G.nodes[nb] or {}).get("type") == "phishing_url":
+                        url_count += 1
+
+            if brands:
+                campaigns.append({
+                    "id": str(n),
+                    "label": label,
+                    "image_url": img,
+                    "brands": brands,
+                    "brand_count": len(brands),
+                    "url_count": url_count,
+                    "popularity": int(data.get("popularity") or 0),
+                })
+
+        campaigns.sort(key=lambda c: (-c["brand_count"], -c["url_count"]))
+        return jsonify({"campaigns": campaigns, "total_brands": len(brand_set)})
+    except Exception as e:
+        return jsonify({"campaigns": [], "error": str(e)})
+
+
 @app.route("/history")
 def history_stats():
     """URL history database statistics — totals, by source, processed vs unprocessed, date ranges."""
@@ -310,6 +443,7 @@ def serve_interactive_graph():
 <header>
   <button id="panelToggle" class="btn" type="button" title="Toggle controls">☰</button>
   <div class="logo">Phish<span>Knot</span></div>
+  <a href="/campaigns" style="font-size:12px;color:var(--muted);text-decoration:none;white-space:nowrap;padding:4px 8px;border-radius:8px;border:1px solid var(--border)">Campaigns</a>
   <div class="stats">
     <div id="statBrands" class="pill">Brands: —</div>
     <div id="statArtists" class="pill">Artists: —</div>
