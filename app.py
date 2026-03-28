@@ -409,7 +409,6 @@ def serve_interactive_graph():
       <div id="chipInfoMeta" style="font-size:11px;color:var(--muted);line-height:1.7"></div>
     </div>
 
-    <h2>Details</h2>
     <details open>
       <summary>Run summary</summary>
       <div class="content">
