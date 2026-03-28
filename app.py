@@ -829,6 +829,7 @@ async function refreshAll(){
     const matches = await fetchJSON(`/graph/matches?${q}`);
     state.meta = meta;
     state.data = data;
+    state.matches = matches;
     renderMeta(meta);
     renderMatches(matches);
     renderGraph(data);
