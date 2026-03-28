@@ -56,6 +56,7 @@ CO_OCCURRENCE_CSV = _OUTPUT_BASE / "co_occurrence_urls.csv"
 OUTPUT_IMAGES_DIR = _OUTPUT_BASE / "output"  # Rendered graph PNGs (latest.png, graph_*.png)
 PAGE_IMAGES_DIR = OUTPUT_IMAGES_DIR / "page_images"  # Cached hero images from phishing pages
 IMAGE_HASH_JSON = CACHE_DIR / "image_hashes.json"   # perceptual hash index: filename -> phash hex
+CAMPAIGN_THUMBS_DIR = OUTPUT_IMAGES_DIR / "campaign_thumbs"  # Per-artist campaign thumbnail PNGs
 RUN_META_JSON = OUTPUT_IMAGES_DIR / "run_meta.json"
 KEYWORDS_JSON = OUTPUT_IMAGES_DIR / "keywords.json"
 MATCHES_JSON = OUTPUT_IMAGES_DIR / "matches.json"
@@ -1728,6 +1729,128 @@ def _brand_artist_subgraph(G, max_nodes=None):
     return H
 
 
+def _fetch_node_image_arr(url, size=80):
+    """Fetch an image URL and return a circular-cropped numpy array, or None."""
+    try:
+        import io
+        import numpy as np
+        from PIL import Image, ImageDraw
+        resp = requests.get(url, timeout=6, headers={"User-Agent": USER_AGENT})
+        resp.raise_for_status()
+        img = Image.open(io.BytesIO(resp.content)).convert("RGBA")
+        img = img.resize((size, size), Image.LANCZOS)
+        mask = Image.new("L", (size, size), 0)
+        ImageDraw.Draw(mask).ellipse([0, 0, size - 1, size - 1], fill=255)
+        img.putalpha(mask)
+        return np.array(img)
+    except Exception:
+        return None
+
+
+def render_campaign_thumbnail(G, artist_node_id, path, spotify_cache=None):
+    """
+    Render a small PNG thumbnail for one artist's campaign subgraph.
+    Shows artist node (with Spotify photo) + connected brand nodes (with logos).
+    Saves to path.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import matplotlib.patheffects as pe
+    from matplotlib.offsetbox import OffsetImage, AnnotationBbox
+    import numpy as np
+
+    if artist_node_id not in G:
+        return
+
+    # Build ego subgraph: artist + directly connected brand nodes
+    data = G.nodes[artist_node_id] or {}
+    artist_label = data.get("label") or str(artist_node_id)
+    neighbors = [nb for nb in (G.successors(artist_node_id) if G.is_directed() else G.neighbors(artist_node_id))
+                 if (G.nodes[nb] or {}).get("type") == "brand"]
+    nodes = [artist_node_id] + neighbors
+    H = G.subgraph(nodes).copy()
+    if H.number_of_nodes() == 0:
+        return
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        pos = nx.spring_layout(H, k=2.0, seed=42, iterations=80)
+    except Exception:
+        pos = nx.random_layout(H, seed=42)
+
+    fig, ax = plt.subplots(figsize=(5, 4))
+    fig.patch.set_facecolor("#0b1020")
+    ax.set_facecolor("#0b1020")
+    ax.axis("off")
+
+    # Draw edges first
+    for u, v in H.edges():
+        if u in pos and v in pos:
+            x0, y0 = pos[u]
+            x1, y1 = pos[v]
+            ax.plot([x0, x1], [y0, y1], color="#ffffff", alpha=0.15, linewidth=0.8, zorder=1)
+
+    # Draw nodes with images where available
+    for node in H.nodes():
+        ndata = H.nodes[node] or {}
+        ntype = ndata.get("type", "")
+        label = (ndata.get("label") or str(node))[:20]
+        img_url = ndata.get("image_url") or ""
+        x, y = pos[node]
+        is_artist = ntype == "artist"
+
+        # Try to get image for artist nodes
+        arr = None
+        if is_artist and not img_url and spotify_cache:
+            s = _spotify_image_for_label(spotify_cache, label) if spotify_cache else ""
+            if s:
+                img_url = s
+        if img_url and is_artist:
+            arr = _fetch_node_image_arr(img_url, size=90)
+
+        if arr is not None:
+            oi = OffsetImage(arr, zoom=0.55, zorder=3)
+            ab = AnnotationBbox(oi, (x, y), frameon=False, zorder=3)
+            ax.add_artist(ab)
+        else:
+            color = "#e67e22" if is_artist else "#2ecc71"
+            size = 220 if is_artist else 80
+            ax.scatter(x, y, s=size, c=color, zorder=2, alpha=0.92, linewidths=0)
+
+        # Label
+        color = "#e67e22" if is_artist else "#aab4de"
+        fontsize = 7 if not is_artist else 9
+        fontweight = "bold" if is_artist else "normal"
+        txt = ax.text(x, y - 0.08, label, ha="center", va="top", fontsize=fontsize,
+                      color=color, fontweight=fontweight, zorder=4)
+        txt.set_path_effects([pe.withStroke(linewidth=2, foreground="#0b1020")])
+
+    plt.tight_layout(pad=0.2)
+    plt.savefig(str(path), dpi=90, bbox_inches="tight", facecolor=fig.get_facecolor())
+    plt.close()
+
+
+def render_all_campaign_thumbnails(G, spotify_cache=None):
+    """Render a thumbnail PNG for each artist node in G."""
+    rendered = 0
+    for node in G.nodes():
+        data = G.nodes[node] or {}
+        if data.get("type") != "artist":
+            continue
+        safe_id = re.sub(r"[^a-zA-Z0-9_-]", "_", str(node))
+        out_path = CAMPAIGN_THUMBS_DIR / f"{safe_id}.png"
+        try:
+            render_campaign_thumbnail(G, node, out_path, spotify_cache=spotify_cache)
+            rendered += 1
+        except Exception as e:
+            print(f"  Thumbnail failed for {node}: {e}")
+    if rendered:
+        print(f"Rendered {rendered} campaign thumbnails to {CAMPAIGN_THUMBS_DIR}.")
+
+
 def render_graph_to_image(G, path, max_nodes=None):
     """Render the graph to a PNG for web display. Shows only brands and artists (co-mentioned); URLs/domains omitted."""
     import matplotlib
@@ -2271,6 +2394,13 @@ def main():
         },
     }
     _write_json(RUN_META_JSON, run_meta)
+    # Campaign thumbnails: render a small graph PNG per artist
+    try:
+        CAMPAIGN_THUMBS_DIR.mkdir(parents=True, exist_ok=True)
+        render_all_campaign_thumbnails(G, spotify_cache=spotify_cache)
+    except Exception as e:
+        print(f"Campaign thumbnail rendering failed (non-fatal): {e}")
+
     # Keep only last 5 timestamped images
     hist = sorted(OUTPUT_IMAGES_DIR.glob("graph_*.png"), key=lambda p: p.stat().st_mtime, reverse=True)
     for old in hist[5:]:

@@ -134,7 +134,9 @@ def campaigns_page():
   h1 { font-size: 22px; font-weight: 700; margin: 0 0 4px; }
   .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
-  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; display: flex; flex-direction: column; gap: 0; }
+  .card-thumb { width: 100%; height: 140px; object-fit: cover; display: block; border-bottom: 1px solid var(--border); }
+  .card-body { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 10px; }
   .card-header { display: flex; align-items: center; gap: 12px; }
   .avatar { width: 52px; height: 52px; border-radius: 999px; object-fit: cover; border: 2px solid var(--artist); flex-shrink: 0; background: rgba(230,126,34,0.15); }
   .card-title { font-size: 16px; font-weight: 600; }
@@ -172,10 +174,14 @@ async function load() {
     const img = c.image_url ? `<img class="avatar" src="${c.image_url}" alt="${c.label}" onerror="this.style.display='none'">` : `<div class="avatar" style="display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px;color:var(--artist)">${(c.label||"?")[0].toUpperCase()}</div>`;
     const brands = (c.brands || []).map(b => `<span class="brand-tag">${b}</span>`).join("");
     const stats = `${c.url_count} URL${c.url_count !== 1 ? "s" : ""} · ${c.brand_count} brand${c.brand_count !== 1 ? "s" : ""}`;
+    const thumb = c.thumb_url ? `<img class="card-thumb" src="${c.thumb_url}" alt="${c.label} campaign" onerror="this.style.display='none'">` : "";
     return `<div class="card">
-      <div class="card-header">${img}<div><div class="card-title">${c.label}</div><div class="card-stats">${stats}</div></div></div>
-      <div class="brands">${brands || "<span style='color:var(--muted);font-size:11px'>No brands</span>"}</div>
-      <a class="explore-btn" href="/graph/interactive?focus_artist=${encodeURIComponent(c.label)}">Explore →</a>
+      ${thumb}
+      <div class="card-body">
+        <div class="card-header">${img}<div><div class="card-title">${c.label}</div><div class="card-stats">${stats}</div></div></div>
+        <div class="brands">${brands || "<span style='color:var(--muted);font-size:11px'>No brands</span>"}</div>
+        <a class="explore-btn" href="/graph/interactive?focus_artist=${encodeURIComponent(c.label)}">Explore →</a>
+      </div>
     </div>`;
   }).join("");
 }
@@ -230,10 +236,15 @@ def campaigns_data():
                         url_count += 1
 
             if brands:
+                import re as _re
+                safe_id = _re.sub(r"[^a-zA-Z0-9_-]", "_", str(n))
+                thumb_path = IMAGES_DIR / "campaign_thumbs" / f"{safe_id}.png"
+                thumb_url = f"/campaign-thumb/{safe_id}.png" if thumb_path.is_file() else None
                 campaigns.append({
                     "id": str(n),
                     "label": label,
                     "image_url": img,
+                    "thumb_url": thumb_url,
                     "brands": brands,
                     "brand_count": len(brands),
                     "url_count": url_count,
@@ -1408,6 +1419,17 @@ def serve_page_image(filename):
     mime = {"jpg": "image/jpeg", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
             ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp"}.get(ext, "image/jpeg")
     return send_from_directory(IMAGES_DIR / "page_images", filename, mimetype=mime)
+
+
+@app.route("/campaign-thumb/<filename>")
+def serve_campaign_thumb(filename):
+    """Serve a rendered campaign subgraph thumbnail PNG."""
+    if not SAFE_FILENAME.match(filename):
+        abort(404)
+    path = IMAGES_DIR / "campaign_thumbs" / filename
+    if not path.is_file():
+        abort(404)
+    return send_from_directory(IMAGES_DIR / "campaign_thumbs", filename, mimetype="image/png")
 
 
 @app.route("/images/<filename>")
