@@ -79,20 +79,28 @@ NO_DOWNLOAD = os.environ.get("NO_DOWNLOAD", "true").lower() not in ("0", "false"
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024  # Cap HTML size (2 MB) to limit parser exposure.
 MAX_REDIRECTS = 3
 
-# Proxy support (optional). Set PROXY_LIST_URL to a Webshare-style newline-separated
-# list of host:port entries, plus PROXY_USERNAME / PROXY_PASSWORD for auth.
-# If not set, requests go direct (no proxy).
+# Proxy support (optional).
+# WEBSHARE_ROTATING_PROXY: full proxy URL e.g. http://user:pass@p.webshare.io:80/
+#   When set, this single rotating endpoint is used for every request (Webshare
+#   handles IP rotation automatically). Takes priority over the list-based approach.
+# PROXY_API_KEY: Webshare API key to fetch a list of static datacenter proxies.
+# PROXY_LIST_URL: fallback plain-text proxy list URL.
 _PROXY_LIST: list[str] = []
 _PROXY_USER = os.environ.get("PROXY_USERNAME", "").strip()
 _PROXY_PASS = os.environ.get("PROXY_PASSWORD", "").strip()
 _PROXY_LIST_URL = os.environ.get("PROXY_LIST_URL", "").strip()
+_ROTATING_PROXY_URL = os.environ.get("WEBSHARE_ROTATING_PROXY", "").strip()
 
 def _load_proxy_list() -> None:
     """Fetch proxy list from Webshare API and populate _PROXY_LIST.
+    If WEBSHARE_ROTATING_PROXY is set, skips list loading (rotation is handled by the endpoint).
     If PROXY_API_KEY is set, uses the v2 list API (paginated JSON).
     Falls back to fetching PROXY_LIST_URL directly (plain-text download URL).
     """
     global _PROXY_LIST
+    if _ROTATING_PROXY_URL:
+        print("Using rotating residential proxy endpoint (WEBSHARE_ROTATING_PROXY).")
+        return
     api_key = os.environ.get("PROXY_API_KEY", "").strip()
     if api_key:
         # Webshare v2 API: GET /api/v2/proxy/list/?mode=direct&page=1&page_size=100
@@ -133,10 +141,11 @@ def _load_proxy_list() -> None:
         print(f"Warning: could not load proxy list: {e}")
 
 def _pick_proxy() -> dict | None:
-    """Return a random requests proxy dict, or None if no proxies configured.
-    Expects list entries in Webshare format: host:port:username:password
-    Falls back to host:port (with PROXY_USERNAME/PROXY_PASSWORD) if only 2 fields.
+    """Return a requests proxy dict, or None if no proxies configured.
+    Prefers WEBSHARE_ROTATING_PROXY (single rotating endpoint) over the static list.
     """
+    if _ROTATING_PROXY_URL:
+        return {"http": _ROTATING_PROXY_URL, "https": _ROTATING_PROXY_URL}
     if not _PROXY_LIST:
         return None
     import random
