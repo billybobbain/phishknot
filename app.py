@@ -1055,8 +1055,17 @@ refreshAll().then(() => {
     const chip = [...document.querySelectorAll(".node-chip")].find(
       c => c.textContent.trim().toLowerCase() === focusArtist.toLowerCase()
     );
-    if (chip) chip.click();
-    if (cy && cy.elements().length > 0) { cy.layout(getLayoutOpts()).run(); cy.fit(undefined, 60); }
+    if (cy && cy.elements().length > 0) {
+      const l = cy.layout(getLayoutOpts());
+      l.one('layoutstop', () => {
+        cy.fit(undefined, 60);
+        if (chip) {
+          chip.click();
+          setTimeout(() => cy.fit(undefined, 60), 350);
+        }
+      });
+      l.run();
+    }
   }
 });
 </script>
