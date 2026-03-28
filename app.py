@@ -404,13 +404,12 @@ def serve_interactive_graph():
       </div>
     </details>
 
+    <div id="chipInfo" style="display:none;margin:10px 0;padding:10px 12px;border-radius:10px;background:rgba(0,0,0,0.18);border:1px solid var(--border)">
+      <div id="chipInfoLabel" style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:4px"></div>
+      <div id="chipInfoMeta" style="font-size:11px;color:var(--muted);line-height:1.7"></div>
+    </div>
+
     <h2>Details</h2>
-    <details open>
-      <summary>Selected node</summary>
-      <div class="content">
-        <div id="selectedNode" style="color:var(--muted)">Click a node to see details.</div>
-      </div>
-    </details>
     <details open>
       <summary>Run summary</summary>
       <div class="content">
@@ -679,6 +678,11 @@ function renderGraph(data){
     style: cyStyle,
     layout: layoutOpts,
   });
+
+  cy.on("tap", "node", (evt) => {
+    const nodeId = evt.target.id();
+    showNodeInfo(nodeId);
+  });
 }
 
 function applySearch(){
@@ -722,6 +726,31 @@ function buildNodeChips(nodes) {
   }
 }
 
+function showNodeInfo(nodeId) {
+  if (!state.data || !state.data.nodes) return;
+  const n = state.data.nodes.find(x => x.id === nodeId);
+  if (!n) return;
+  const infoBox = el("chipInfo");
+  const labelEl = el("chipInfoLabel");
+  const metaEl = el("chipInfoMeta");
+  if (!infoBox) return;
+  const typeLabel = n.type.charAt(0).toUpperCase() + n.type.slice(1);
+  const neighbors = cy ? cy.getElementById(nodeId).neighborhood().nodes() : [];
+  const connectedBrands = [...neighbors].filter(x => x.data("type") === "brand").length;
+  const connectedArtists = [...neighbors].filter(x => x.data("type") === "artist").length;
+  const connectedDomains = [...neighbors].filter(x => x.data("type") === "domain").length;
+  const connectedUrls = [...neighbors].filter(x => x.data("type") === "phishing_url").length;
+  let meta = `Type: ${typeLabel} &nbsp;·&nbsp; Connections: ${n.degree}`;
+  if (connectedBrands) meta += ` &nbsp;·&nbsp; Brands: ${connectedBrands}`;
+  if (connectedArtists) meta += ` &nbsp;·&nbsp; Artists: ${connectedArtists}`;
+  if (connectedDomains) meta += ` &nbsp;·&nbsp; Domains: ${connectedDomains}`;
+  if (connectedUrls) meta += ` &nbsp;·&nbsp; URLs: ${connectedUrls}`;
+  if (n.full_url) meta += `<br><span style="word-break:break-all">${n.full_url}</span>`;
+  labelEl.textContent = n.label;
+  metaEl.innerHTML = meta;
+  infoBox.style.display = "block";
+}
+
 function handleChipClick(nodeId, colorClass, chip) {
   if (!cy) return;
   const cyNode = cy.getElementById(nodeId);
@@ -737,8 +766,9 @@ function handleChipClick(nodeId, colorClass, chip) {
   cy.nodes().unselect();
 
   if (isActive) {
-    // Second click on same chip: clear selection
     _activeChipId = null;
+    const infoBox = el("chipInfo");
+    if (infoBox) infoBox.style.display = "none";
     return;
   }
 
@@ -754,6 +784,8 @@ function handleChipClick(nodeId, colorClass, chip) {
   document.querySelectorAll(".node-chip").forEach(c => {
     if (c.dataset.nodeId !== nodeId) c.classList.add("dimmed");
   });
+
+  showNodeInfo(nodeId);
 }
 
 async function refreshAll(){

@@ -55,6 +55,7 @@ CO_OCCURRENCE_GEXF = _OUTPUT_BASE / "co_occurrence.gexf"
 CO_OCCURRENCE_CSV = _OUTPUT_BASE / "co_occurrence_urls.csv"
 OUTPUT_IMAGES_DIR = _OUTPUT_BASE / "output"  # Rendered graph PNGs (latest.png, graph_*.png)
 PAGE_IMAGES_DIR = OUTPUT_IMAGES_DIR / "page_images"  # Cached hero images from phishing pages
+IMAGE_HASH_JSON = CACHE_DIR / "image_hashes.json"   # perceptual hash index: filename -> phash hex
 RUN_META_JSON = OUTPUT_IMAGES_DIR / "run_meta.json"
 KEYWORDS_JSON = OUTPUT_IMAGES_DIR / "keywords.json"
 MATCHES_JSON = OUTPUT_IMAGES_DIR / "matches.json"
@@ -1169,9 +1170,110 @@ def download_and_cache_image(img_url, cache_dir):
             return ""  # Not a recognized image format — discard
         filename = f"page_{url_hash}{ext}"
         (cache_dir / filename).write_bytes(data)
+        compute_and_store_image_hash(filename)
         return filename
     except Exception:
         return ""
+
+
+# -----------------------------------------------------------------------------
+# Perceptual image hashing (kit fingerprinting)
+# -----------------------------------------------------------------------------
+
+def _load_image_hash_index() -> dict:
+    """Load filename -> phash hex mapping from cache."""
+    if IMAGE_HASH_JSON.exists():
+        try:
+            return json.loads(IMAGE_HASH_JSON.read_text("utf-8"))
+        except Exception:
+            pass
+    return {}
+
+
+def _save_image_hash_index(index: dict) -> None:
+    IMAGE_HASH_JSON.parent.mkdir(parents=True, exist_ok=True)
+    IMAGE_HASH_JSON.write_text(json.dumps(index, indent=2), encoding="utf-8")
+
+
+def _phash_file(path) -> str:
+    """Compute perceptual hash of an image file. Returns hex string or ''."""
+    try:
+        import imagehash
+        from PIL import Image
+        return str(imagehash.phash(Image.open(path)))
+    except Exception:
+        return ""
+
+
+def compute_and_store_image_hash(filename: str) -> str:
+    """Compute pHash for a cached page image and persist it. Returns phash hex or ''."""
+    if not filename:
+        return ""
+    path = PAGE_IMAGES_DIR / filename
+    if not path.exists():
+        return ""
+    index = _load_image_hash_index()
+    if filename in index:
+        return index[filename]
+    ph = _phash_file(path)
+    if ph:
+        index[filename] = ph
+        _save_image_hash_index(index)
+    return ph
+
+
+def backfill_image_hashes() -> None:
+    """Hash all existing cached page images that are not yet in the index."""
+    if not PAGE_IMAGES_DIR.exists():
+        return
+    index = _load_image_hash_index()
+    updated = 0
+    for img_path in PAGE_IMAGES_DIR.iterdir():
+        if img_path.suffix.lower() not in (".jpg", ".jpeg", ".png", ".gif", ".webp"):
+            continue
+        if img_path.name not in index:
+            ph = _phash_file(img_path)
+            if ph:
+                index[img_path.name] = ph
+                updated += 1
+    if updated:
+        _save_image_hash_index(index)
+        print(f"Image hash backfill: hashed {updated} cached images.")
+    else:
+        print("Image hash backfill: nothing new to hash.")
+
+
+def get_kit_families(hamming_threshold: int = 6) -> dict:
+    """
+    Group cached images into kit families by perceptual hash similarity.
+    Returns dict: representative_phash -> list of filenames in that family.
+    Hamming distance <= threshold = same kit template.
+    """
+    try:
+        import imagehash
+    except ImportError:
+        return {}
+    index = _load_image_hash_index()
+    if not index:
+        return {}
+    hashes = {fname: imagehash.hex_to_hash(ph) for fname, ph in index.items() if ph}
+    families = {}   # rep_phash_str -> [filenames]
+    assigned = {}   # filename -> rep_phash_str
+    for fname, ph in hashes.items():
+        matched = None
+        for rep_str, members in families.items():
+            rep_ph = imagehash.hex_to_hash(rep_str)
+            if (ph - rep_ph) <= hamming_threshold:
+                matched = rep_str
+                break
+        if matched:
+            families[matched].append(fname)
+            assigned[fname] = matched
+        else:
+            rep_str = str(ph)
+            families[rep_str] = [fname]
+            assigned[fname] = rep_str
+    return families
 
 
 # -----------------------------------------------------------------------------
@@ -1845,6 +1947,7 @@ def print_stats(G, results):
 def main():
     global _artist_keywords_combined
     _load_proxy_list()
+    backfill_image_hashes()
     # Refresh Last.fm top-artists cache if configured, then build combined artist list for matching.
     refresh_lastfm_cache_if_needed()
     _artist_keywords_combined = build_combined_artist_keywords()
