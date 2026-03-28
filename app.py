@@ -135,7 +135,9 @@ def campaigns_page():
   .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
   .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; display: flex; flex-direction: column; gap: 0; }
-  .card-thumb { width: 100%; height: 140px; object-fit: cover; display: block; border-bottom: 1px solid var(--border); }
+  .card-thumb-link { display: block; border-bottom: 1px solid var(--border); }
+  .card-thumb { width: 100%; height: 220px; object-fit: cover; display: block; transition: opacity 0.15s; }
+  .card-thumb-link:hover .card-thumb { opacity: 0.85; }
   .card-body { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 10px; }
   .card-header { display: flex; align-items: center; gap: 12px; }
   .avatar { width: 52px; height: 52px; border-radius: 999px; object-fit: cover; border: 2px solid var(--artist); flex-shrink: 0; background: rgba(230,126,34,0.15); }
@@ -143,8 +145,6 @@ def campaigns_page():
   .card-stats { font-size: 11px; color: var(--muted); }
   .brands { display: flex; flex-wrap: wrap; gap: 4px; }
   .brand-tag { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: rgba(46,204,113,0.15); color: var(--brand); border: 1px solid rgba(46,204,113,0.25); }
-  .explore-btn { margin-top: auto; display: inline-block; text-align: center; padding: 8px 0; border-radius: 8px; background: rgba(122,162,255,0.12); color: var(--accent); font-size: 13px; text-decoration: none; border: 1px solid rgba(122,162,255,0.2); transition: background 0.15s; }
-  .explore-btn:hover { background: rgba(122,162,255,0.22); }
   #loading { color: var(--muted); font-size: 14px; padding: 40px 0; text-align: center; }
 </style>
 </head>
@@ -174,13 +174,13 @@ async function load() {
     const img = c.image_url ? `<img class="avatar" src="${c.image_url}" alt="${c.label}" onerror="this.style.display='none'">` : `<div class="avatar" style="display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px;color:var(--artist)">${(c.label||"?")[0].toUpperCase()}</div>`;
     const brands = (c.brands || []).map(b => `<span class="brand-tag">${b}</span>`).join("");
     const stats = `${c.url_count} URL${c.url_count !== 1 ? "s" : ""} · ${c.brand_count} brand${c.brand_count !== 1 ? "s" : ""}`;
-    const thumb = c.thumb_url ? `<img class="card-thumb" src="${c.thumb_url}" alt="${c.label} campaign" onerror="this.style.display='none'">` : "";
+    const exploreHref = `/graph/interactive?focus_artist=${encodeURIComponent(c.label)}`;
+    const thumb = c.thumb_url ? `<a class="card-thumb-link" href="${exploreHref}"><img class="card-thumb" src="${c.thumb_url}" alt="${c.label} campaign" onerror="this.parentElement.style.display='none'"></a>` : "";
     return `<div class="card">
       ${thumb}
       <div class="card-body">
         <div class="card-header">${img}<div><div class="card-title">${c.label}</div><div class="card-stats">${stats}</div></div></div>
         <div class="brands">${brands || "<span style='color:var(--muted);font-size:11px'>No brands</span>"}</div>
-        <a class="explore-btn" href="/graph/interactive?focus_artist=${encodeURIComponent(c.label)}">Explore →</a>
       </div>
     </div>`;
   }).join("");
