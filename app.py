@@ -175,7 +175,7 @@ async function load() {
     return `<div class="card">
       <div class="card-header">${img}<div><div class="card-title">${c.label}</div><div class="card-stats">${stats}</div></div></div>
       <div class="brands">${brands || "<span style='color:var(--muted);font-size:11px'>No brands</span>"}</div>
-      <a class="explore-btn" href="/graph/interactive">Explore →</a>
+      <a class="explore-btn" href="/graph/interactive?focus_artist=${encodeURIComponent(c.label)}">Explore →</a>
     </div>`;
   }).join("");
 }
@@ -221,10 +221,11 @@ def campaigns_data():
             ))
             brand_set.update(brands)
 
-            # Count URLs from original graph that connect to this artist
+            # Count URLs from original graph: artist -> url (successors in DiGraph)
             url_count = 0
             if n in G:
-                for nb in G.predecessors(n) if G.is_directed() else G.neighbors(n):
+                neighbors_fn = G.successors if G.is_directed() else G.neighbors
+                for nb in neighbors_fn(n):
                     if (G.nodes[nb] or {}).get("type") == "phishing_url":
                         url_count += 1
 
@@ -1034,7 +1035,16 @@ if (rerunLayout) rerunLayout.addEventListener("click", () => {
   if (cy && cy.elements().length > 0) cy.layout(getLayoutOpts()).run();
 });
 
-refreshAll();
+refreshAll().then(() => {
+  const params = new URLSearchParams(window.location.search);
+  const focusArtist = params.get("focus_artist");
+  if (focusArtist) {
+    const chip = [...document.querySelectorAll(".node-chip")].find(
+      c => c.textContent.trim().toLowerCase() === focusArtist.toLowerCase()
+    );
+    if (chip) chip.click();
+  }
+});
 </script>
 </body>
 </html>"""
