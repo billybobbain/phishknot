@@ -289,6 +289,29 @@ def debug():
             f"({stats.get('brands_count', 0)} brand, {stats.get('artists_count', 0)} artist). "
             f"Full graph: {stats.get('full_nodes', 0)} nodes, {stats.get('full_edges', 0)} edges."
         )
+
+    # Compound domain node diagnostics
+    try:
+        gexf_path = DATA_DIR / "phishing_graph.gexf"
+        G = _load_graph_from_gexf(gexf_path)
+        if G is not None:
+            node_types = {}
+            registered_domains = []
+            for n, d in G.nodes(data=True):
+                t = (d or {}).get("type", "unknown")
+                node_types[t] = node_types.get(t, 0) + 1
+                if t == "registered_domain":
+                    label = (d or {}).get("label", str(n))
+                    # Count domain children
+                    children = [x for x, dx in G.nodes(data=True) if (dx or {}).get("parent_id") == n]
+                    registered_domains.append({"label": label, "child_domains": len(children)})
+            out["node_type_counts"] = node_types
+            out["registered_domains"] = sorted(registered_domains, key=lambda x: -x["child_domains"])[:20]
+        else:
+            out["compound_debug"] = "GEXF not found or unreadable"
+    except Exception as e:
+        out["compound_debug_error"] = str(e)
+
     return jsonify(out)
 
 
