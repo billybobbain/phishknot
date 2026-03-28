@@ -818,14 +818,19 @@ def init_history_db():
                 first_seen TEXT NOT NULL,
                 last_seen TEXT NOT NULL,
                 source TEXT NOT NULL,
-                processed_at TEXT
+                processed_at TEXT,
+                domain TEXT,
+                brands TEXT,
+                artists TEXT,
+                page_image_file TEXT
             )
         """)
-        # Migrate existing DBs that predate processed_at column.
-        try:
-            conn.execute("ALTER TABLE url_history ADD COLUMN processed_at TEXT")
-        except Exception:
-            pass  # Column already exists
+        # Migrate existing DBs that predate these columns.
+        for col_def in ("processed_at TEXT", "domain TEXT", "brands TEXT", "artists TEXT", "page_image_file TEXT"):
+            try:
+                conn.execute(f"ALTER TABLE url_history ADD COLUMN {col_def}")
+            except Exception:
+                pass  # Column already exists
         conn.commit()
     finally:
         conn.close()
@@ -903,6 +908,71 @@ def mark_urls_processed(urls):
             [(now, u) for u in urls if u],
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+def save_url_matches(results):
+    """Persist brand/artist match data for each processed URL into url_history."""
+    if not results:
+        return
+    conn = _get_history_conn()
+    try:
+        for r in results:
+            url = r.get("url", "")
+            if not url:
+                continue
+            brands = sorted(list(r.get("brands") or []))
+            artists = [
+                {"name": a.get("name", ""), "artist_keyword": a.get("artist_keyword", ""),
+                 "popularity": a.get("popularity"), "spotify_id": a.get("spotify_id", ""),
+                 "image_url": a.get("image_url", "")}
+                for a in (r.get("artists") or []) if isinstance(a, dict)
+            ]
+            conn.execute(
+                """UPDATE url_history SET domain=?, brands=?, artists=?, page_image_file=?
+                   WHERE url=?""",
+                (
+                    r.get("domain", ""),
+                    json.dumps(brands),
+                    json.dumps(artists),
+                    r.get("page_image_file", ""),
+                    url,
+                ),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def load_all_historical_results():
+    """Load all URLs with stored match data from url_history to build the cumulative graph."""
+    conn = _get_history_conn()
+    try:
+        cur = conn.execute(
+            """SELECT url, domain, brands, artists, page_image_file
+               FROM url_history
+               WHERE brands IS NOT NULL AND brands != '[]'"""
+        )
+        results = []
+        for row in cur.fetchall():
+            try:
+                brands = set(json.loads(row[2] or "[]"))
+                artists = json.loads(row[3] or "[]")
+                if not brands and not artists:
+                    continue
+                results.append({
+                    "url": row[0],
+                    "domain": row[1] or "",
+                    "brands": brands,
+                    "artists": artists,
+                    "evidence": "history",
+                    "match_detail": {},
+                    "page_image_file": row[4] or "",
+                })
+            except Exception:
+                continue
+        return results
     finally:
         conn.close()
 
@@ -2260,10 +2330,16 @@ def main():
     if USE_URL_HISTORY:
         mark_urls_processed(to_process)
         print(f"Marked {len(to_process)} URLs as processed in history.")
+        save_url_matches(results)
+        print(f"Saved match data for {len(results)} URLs to history DB.")
+        all_results = load_all_historical_results()
+        print(f"Loaded {len(all_results)} cumulative URL matches from history for graph build.")
+    else:
+        all_results = results
 
-    # Build brand_images: first cached page image found per brand (first-wins across all results).
+    # Build brand_images from full history (first cached page image per brand).
     brand_images = {}
-    for r in results:
+    for r in all_results:
         pf = r.get("page_image_file", "")
         if not pf:
             continue
@@ -2274,7 +2350,7 @@ def main():
         print(f"Brand images cached: {len(brand_images)} brands have page images.")
 
     # Always write the co-occurrence subset (URLs with BOTH brand AND artist) so the UI dropdown works.
-    co_results = [r for r in results if (r.get("brands") and r.get("artists"))]
+    co_results = [r for r in all_results if (r.get("brands") and r.get("artists"))]
     if co_results:
         export_url_brands_csv(co_results, CO_OCCURRENCE_CSV)
         export_gexf(build_graph(co_results, brand_images=brand_images), CO_OCCURRENCE_GEXF)
@@ -2284,20 +2360,20 @@ def main():
 
     # Optionally restrict pipeline output to co-occurrence only.
     if CO_OCCURRENCE_ONLY:
-        results = co_results
-        print(f"CO_OCCURRENCE_ONLY: keeping only the {len(results)} co-occurrence URLs.")
-        if not results:
+        all_results = co_results
+        print(f"CO_OCCURRENCE_ONLY: keeping only the {len(all_results)} co-occurrence URLs.")
+        if not all_results:
             print("Try NO_DOWNLOAD=False (and run in Docker) to scan page content.")
             return
     else:
-        export_url_brands_csv(results, URL_BRANDS_CSV)
+        export_url_brands_csv(all_results, URL_BRANDS_CSV)
 
-    G = build_graph(results, brand_images=brand_images)
+    G = build_graph(all_results, brand_images=brand_images)
     export_gexf(G, GRAPH_GEXF)
     export_edges_csv(G, EDGES_CSV)
     if not CO_OCCURRENCE_ONLY:
-        export_url_brands_csv(results, URL_BRANDS_CSV)
-    print_stats(G, results)
+        export_url_brands_csv(all_results, URL_BRANDS_CSV)
+    print_stats(G, all_results)
     print(f"\nGraph: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges.")
 
     # Rendered images for web (Railway / stream)
