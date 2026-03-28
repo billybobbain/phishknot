@@ -282,6 +282,11 @@ def serve_interactive_graph():
   #graph { width: 100%; height: calc(100vh - 52px); }
   .legend { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
   .chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.12); padding: 4px 8px; border-radius: 999px; font-size: 12px; color: var(--muted); }
+  .node-chip { cursor: pointer; border: 1px solid rgba(255,255,255,0.15); background: rgba(255,255,255,0.05); padding: 3px 9px; border-radius: 999px; font-size: 11px; color: var(--muted); transition: background 0.15s, color 0.15s; white-space: nowrap; }
+  .node-chip:hover { background: rgba(255,255,255,0.10); color: var(--text); }
+  .node-chip.active-brand { background: rgba(46,204,113,0.25); border-color: #2ecc71; color: #2ecc71; }
+  .node-chip.active-artist { background: rgba(230,126,34,0.25); border-color: #e67e22; color: #e67e22; }
+  .node-chip.dimmed { opacity: 0.35; }
   .dot { width: 10px; height: 10px; border-radius: 999px; display: inline-block; }
   .dot.brand { background: var(--brand); }
   .dot.artist { background: var(--artist); }
@@ -385,6 +390,19 @@ def serve_interactive_graph():
       <span class="chip"><span class="dot artist"></span> artist</span>
       <span class="chip"><span class="dot domain"></span> domain</span>
     </div>
+
+    <details open>
+      <summary>Brands</summary>
+      <div class="content">
+        <div id="brandChips" style="display:flex;flex-wrap:wrap;gap:5px;padding:4px 0"></div>
+      </div>
+    </details>
+    <details open>
+      <summary>Artists</summary>
+      <div class="content">
+        <div id="artistChips" style="display:flex;flex-wrap:wrap;gap:5px;padding:4px 0"></div>
+      </div>
+    </details>
 
     <h2>Details</h2>
     <details open>
@@ -675,6 +693,69 @@ function applySearch(){
   cy.animate({ center: { eles: n }, zoom: Math.max(cy.zoom(), 1.2) }, { duration: 250 });
 }
 
+let _activeChipId = null;
+
+function buildNodeChips(nodes) {
+  const brands = nodes.filter(n => n.type === "brand").sort((a,b) => a.label.localeCompare(b.label));
+  const artists = nodes.filter(n => n.type === "artist").sort((a,b) => a.label.localeCompare(b.label));
+
+  function makeChip(n, colorClass) {
+    const chip = document.createElement("span");
+    chip.className = "node-chip";
+    chip.textContent = n.label;
+    chip.dataset.nodeId = n.id;
+    chip.addEventListener("click", () => handleChipClick(n.id, colorClass, chip));
+    return chip;
+  }
+
+  const brandContainer = el("brandChips");
+  const artistContainer = el("artistChips");
+  if (brandContainer) {
+    brandContainer.innerHTML = "";
+    brands.forEach(n => brandContainer.appendChild(makeChip(n, "active-brand")));
+    if (!brands.length) brandContainer.innerHTML = "<span style='color:var(--muted);font-size:11px'>None in current graph</span>";
+  }
+  if (artistContainer) {
+    artistContainer.innerHTML = "";
+    artists.forEach(n => artistContainer.appendChild(makeChip(n, "active-artist")));
+    if (!artists.length) artistContainer.innerHTML = "<span style='color:var(--muted);font-size:11px'>None in current graph</span>";
+  }
+}
+
+function handleChipClick(nodeId, colorClass, chip) {
+  if (!cy) return;
+  const cyNode = cy.getElementById(nodeId);
+  if (!cyNode || cyNode.length === 0) return;
+
+  const isActive = _activeChipId === nodeId;
+
+  // Reset all chips and node opacity
+  document.querySelectorAll(".node-chip").forEach(c => {
+    c.classList.remove("active-brand", "active-artist", "dimmed");
+  });
+  cy.elements().style("opacity", 1);
+  cy.nodes().unselect();
+
+  if (isActive) {
+    // Second click on same chip: clear selection
+    _activeChipId = null;
+    return;
+  }
+
+  // Highlight this node and its neighbors; dim everything else
+  _activeChipId = nodeId;
+  chip.classList.add(colorClass);
+  const neighborhood = cyNode.closedNeighborhood();
+  cy.elements().not(neighborhood).style("opacity", 0.12);
+  cyNode.select();
+  cy.animate({ center: { eles: cyNode }, zoom: Math.max(cy.zoom(), 1.4) }, { duration: 250 });
+
+  // Dim other chips
+  document.querySelectorAll(".node-chip").forEach(c => {
+    if (c.dataset.nodeId !== nodeId) c.classList.add("dimmed");
+  });
+}
+
 async function refreshAll(){
   try {
     setError("");
@@ -688,6 +769,9 @@ async function refreshAll(){
     renderMeta(meta);
     renderMatches(matches);
     renderGraph(data);
+    _activeChipId = null;
+    if (cy) cy.elements().style("opacity", 1);
+    buildNodeChips(data.nodes || []);
   } catch (e) {
     setError(`Failed to load graph data: ${e.message}`);
     el("status").textContent = "Error";
