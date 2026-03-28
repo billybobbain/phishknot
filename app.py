@@ -1050,6 +1050,8 @@ refreshAll().then(() => {
   const params = new URLSearchParams(window.location.search);
   const focusArtist = params.get("focus_artist");
   if (focusArtist) {
+    const layoutSel = document.getElementById("layoutMode");
+    if (layoutSel) layoutSel.value = "concentric";
     const chip = [...document.querySelectorAll(".node-chip")].find(
       c => c.textContent.trim().toLowerCase() === focusArtist.toLowerCase()
     );
