@@ -638,8 +638,8 @@ function renderMeta(meta){
   const img = meta.image_summary || {};
   const counts = meta.counts || {};
   // Header stat pills
-  const sb = el("statBrands"); if (sb) sb.innerHTML = `<strong>${rs.brands_count ?? "?"}</strong> brands`;
-  const sa = el("statArtists"); if (sa) sa.innerHTML = `<strong>${rs.artists_count ?? "?"}</strong> artists`;
+  const sb = el("statBrands"); if (sb) sb.innerHTML = `<strong>${ds.brands_count ?? rs.display_brands ?? "?"}</strong> brands`;
+  const sa = el("statArtists"); if (sa) sa.innerHTML = `<strong>${ds.artists_count ?? rs.display_artists ?? "?"}</strong> artists`;
   const su = el("statUrls"); if (su) su.innerHTML = `<strong>${counts.urls_processed ?? "?"}</strong> URLs`;
   const sr = el("statRun");
   if (sr && meta.generated_at_utc) {

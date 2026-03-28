@@ -1783,10 +1783,20 @@ def render_campaign_thumbnail(G, artist_node_id, path, spotify_cache=None):
     except Exception:
         pos = nx.random_layout(H, seed=42)
 
+    # Compute axis limits with generous padding so outer nodes + labels don't clip
+    xs = [p[0] for p in pos.values()]
+    ys = [p[1] for p in pos.values()]
+    xpad = max(0.35, (max(xs) - min(xs)) * 0.28)
+    ypad = max(0.35, (max(ys) - min(ys)) * 0.28)
+    xlim = (min(xs) - xpad, max(xs) + xpad)
+    ylim = (min(ys) - ypad, max(ys) + ypad)
+
     fig, ax = plt.subplots(figsize=(5, 4))
     fig.patch.set_facecolor("#0b1020")
     ax.set_facecolor("#0b1020")
     ax.axis("off")
+    ax.set_xlim(xlim)
+    ax.set_ylim(ylim)
 
     # Draw edges first
     for u, v in H.edges():
