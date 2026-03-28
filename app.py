@@ -1056,13 +1056,16 @@ refreshAll().then(() => {
       c => c.textContent.trim().toLowerCase() === focusArtist.toLowerCase()
     );
     if (cy && cy.elements().length > 0) {
+      const graphEl = el("graph");
+      if (graphEl) graphEl.style.visibility = "hidden";
       const l = cy.layout(getLayoutOpts());
       l.one('layoutstop', () => {
         cy.fit(undefined, 60);
-        if (chip) {
-          chip.click();
-          setTimeout(() => cy.fit(undefined, 60), 350);
-        }
+        if (chip) chip.click();
+        setTimeout(() => {
+          cy.fit(undefined, 60);
+          if (graphEl) graphEl.style.visibility = "visible";
+        }, 350);
       });
       l.run();
     }
