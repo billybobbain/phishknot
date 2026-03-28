@@ -1796,8 +1796,8 @@ def _subgraph_for_display(G, max_nodes):
 
 
 def _focus_subgraph(G):
-    """Return a subgraph with only domain, brand, artist nodes (no phishing_url). Edges: brand-domain, artist-domain (via shared URL), artist-brand (co_mentioned). Used for GEXF/CSV; not for web display."""
-    focus_types = {"domain", "brand", "artist"}
+    """Return a subgraph with only domain, registered_domain, brand, artist nodes (no phishing_url). Edges: brand-domain, artist-domain (via shared URL), artist-brand (co_mentioned). Used for GEXF/CSV; not for web display."""
+    focus_types = {"domain", "registered_domain", "brand", "artist"}
     nodes = [n for n in G.nodes() if G.nodes[n].get("type") in focus_types]
     if not nodes:
         return G.subgraph(nodes).copy()
@@ -1810,7 +1810,7 @@ def _focus_subgraph(G):
             continue
         succ = list(G.successors(u))
         pred = list(G.predecessors(u))
-        d_ids = [v for v in succ if G.nodes[v].get("type") == "domain"]
+        d_ids = [v for v in succ if G.nodes[v].get("type") in ("domain", "registered_domain")]
         b_ids = [v for v in pred if G.nodes[v].get("type") == "brand"]
         a_ids = [v for v in pred if G.nodes[v].get("type") == "artist"]
         for d in d_ids:
