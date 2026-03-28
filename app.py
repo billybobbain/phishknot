@@ -634,7 +634,7 @@ function renderGraph(data){
     {
       selector: "edge",
       style: {
-        "curve-style": "bezier",
+        "curve-style": "unbundled-bezier",
         "width": 1.2,
         "line-color": "rgba(255,255,255,0.18)",
         "target-arrow-shape": "triangle",
