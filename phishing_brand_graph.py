@@ -1556,12 +1556,31 @@ def get_artist_popularity(token, artist_name, cache):
 # Graph
 # -----------------------------------------------------------------------------
 def domain_from_url(url):
-    """Extract registered domain (host) from URL."""
+    """Extract full hostname (netloc) from URL."""
     try:
         parsed = urlparse(url)
         return parsed.netloc or ""
     except Exception:
         return ""
+
+
+def registered_domain_from_url(url):
+    """Extract the registered domain (e.g. evil.com from sub.evil.com) using tldextract.
+    Returns (registered_domain, is_subdomain) where is_subdomain is True when the
+    hostname has a subdomain prefix beyond the registered domain.
+    Returns (netloc, False) as fallback if tldextract is unavailable.
+    """
+    try:
+        import tldextract
+        ext = tldextract.extract(url)
+        if ext.domain and ext.suffix:
+            reg = f"{ext.domain}.{ext.suffix}"
+            netloc = domain_from_url(url)
+            is_sub = bool(ext.subdomain) and netloc != reg
+            return reg, is_sub
+    except Exception:
+        pass
+    return domain_from_url(url), False
 
 
 def _safe_gexf_id(prefix, value):
@@ -1627,6 +1646,9 @@ def build_graph(results, brand_images=None):
             continue
         u_id = get_id("url", url)
         d_id = get_id("domain", domain)
+        reg_domain, is_sub = registered_domain_from_url(url)
+        rd_id = get_id("registered_domain", reg_domain) if (reg_domain and is_sub) else None
+
         # Short label for Gephi (hostname or hostname + path hint); full URL in full_url attribute
         url_short_label = _short_url_label_for_gexf(url, hostname_total_count=domain_count.get(domain, 1))
         if not url_short_label:
@@ -1648,7 +1670,20 @@ def build_graph(results, brand_images=None):
             domain=domain or "",
             title=domain or "",
             popularity=0,
+            parent_id=rd_id or "",
         )
+        if rd_id:
+            # Create or update the registered_domain compound parent node
+            if rd_id not in G:
+                G.add_node(
+                    rd_id,
+                    type="registered_domain",
+                    label=reg_domain,
+                    full_url="",
+                    domain=reg_domain,
+                    title=reg_domain,
+                    popularity=0,
+                )
         G.add_edge(u_id, d_id, relationship_type="hosted_on", evidence_source=evidence)
         for b in r.get("brands", set()):
             if not b:

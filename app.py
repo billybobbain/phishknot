@@ -770,7 +770,13 @@ function renderGraph(data){
       return s;
     }
   };
-  for (const n of nodes) {
+  // registered_domain compound parents must be added before their children
+  const sortedNodes = [...nodes].sort((a, b) => {
+    if (a.type === "registered_domain" && b.type !== "registered_domain") return -1;
+    if (b.type === "registered_domain" && a.type !== "registered_domain") return 1;
+    return 0;
+  });
+  for (const n of sortedNodes) {
     const data = {
       id: n.id,
       label: n.label,
@@ -778,8 +784,9 @@ function renderGraph(data){
       degree: n.degree || 0,
       image_url: absoluteImageUrl(fallbackImage(n)),
     };
+    if (n.parent) data.parent = n.parent;
     const el = { data };
-    if (n.x != null && n.y != null && Number.isFinite(n.x) && Number.isFinite(n.y)) {
+    if (!n.parent && n.x != null && n.y != null && Number.isFinite(n.x) && Number.isFinite(n.y)) {
       const p = { x: n.x, y: n.y };
       el.position = p;
       _serverPos[n.id] = p;
@@ -801,12 +808,14 @@ function renderGraph(data){
     if (t === "brand") return "#2ecc71";
     if (t === "artist") return "#e67e22";
     if (t === "domain") return "#9b59b6";
+    if (t === "registered_domain") return "#4a90d9";
     return "rgba(255,255,255,0.35)";
   };
   const bgColor = (t) => {
     if (t === "brand") return "rgba(46, 204, 113, 0.22)";
     if (t === "artist") return "rgba(230, 126, 34, 0.22)";
     if (t === "domain") return "rgba(155, 89, 182, 0.22)";
+    if (t === "registered_domain") return "rgba(20, 30, 60, 0.85)";
     return "rgba(255,255,255,0.10)";
   };
   const cyStyle = [
@@ -831,6 +840,24 @@ function renderGraph(data){
         "text-max-width": 140,
         "text-outline-width": 2,
         "text-outline-color": "#0a0f1f",
+      },
+    },
+    {
+      selector: "node[type='registered_domain']",
+      style: {
+        "shape": "roundrectangle",
+        "background-color": "rgba(20, 30, 60, 0.85)",
+        "background-image": "none",
+        "border-width": 2,
+        "border-color": "#4a90d9",
+        "border-style": "dashed",
+        "label": "data(label)",
+        "text-valign": "top",
+        "text-halign": "center",
+        "text-margin-y": -6,
+        "font-size": 12,
+        "color": "#4a90d9",
+        "padding": "20px",
       },
     },
     {
@@ -865,7 +892,22 @@ function renderGraph(data){
   });
 
   cy.on("tap", "node", (evt) => {
-    const nodeId = evt.target.id();
+    const node = evt.target;
+    const nodeId = node.id();
+    if (node.data("type") === "registered_domain") {
+      const children = node.children();
+      if (children.length > 0) {
+        if (children.first().hidden()) {
+          children.show();
+          node.style("border-style", "dashed");
+        } else {
+          children.hide();
+          node.style("border-style", "solid");
+        }
+        cy.fit(undefined, 40);
+      }
+      return;
+    }
     showNodeInfo(nodeId);
   });
 }
@@ -1333,17 +1375,20 @@ def graph_data():
                     img = f"/avatar/{n_type or 'node'}/{str(n)}.svg"
             img = _proxify_spotify_image_url(img)
             is_anchor = n_type in anchor_types
-            # Size: anchors large + readable, domain medium, url/other small
+            # Size: anchors large + readable, registered_domain compound, domain medium, url/other small
             if is_anchor:
                 node_size = 80
                 node_font_size = 14
+            elif n_type == "registered_domain":
+                node_size = 60
+                node_font_size = 12
             elif n_type == "domain":
                 node_size = 44
                 node_font_size = 11
             else:
                 node_size = 34
                 node_font_size = 10
-            nodes.append({
+            node_entry = {
                 "id": str(n),
                 "label": label,
                 "type": n_type,
@@ -1357,7 +1402,11 @@ def graph_data():
                 "degree": int(deg.get(n, 0)),
                 "x": float(pos[n][0]) if n in pos else 0.0,
                 "y": float(pos[n][1]) if n in pos else 0.0,
-            })
+            }
+            parent_id = (data.get("parent_id") or "").strip()
+            if parent_id and parent_id in H:
+                node_entry["parent"] = parent_id
+            nodes.append(node_entry)
 
         edges = []
         for u, v, data in H.edges(data=True):
