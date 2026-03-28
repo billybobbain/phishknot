@@ -363,7 +363,7 @@ BANK_KEYWORDS = [
     "banco safra",
     "btg pactual",
     "nubank",
-    "inter",
+    "banco inter",
     "banco btg",
     "scotiabank chile",
     "banco de chile",
@@ -673,7 +673,7 @@ BRAND_LOGO_MAP = {
     "fnb":          "https://upload.wikimedia.org/wikipedia/commons/4/4a/First_National_Bank_Logo.png",
     "standard bank":"https://upload.wikimedia.org/wikipedia/commons/2/29/Standard_Bank_Logo.svg",
     # Other
-    "inter":        "https://upload.wikimedia.org/wikipedia/commons/8/8e/Banco_Inter_logo.svg",
+    "banco inter":  "https://upload.wikimedia.org/wikipedia/commons/8/8e/Banco_Inter_logo.svg",
     "ccb":          "https://upload.wikimedia.org/wikipedia/commons/1/10/China_Construction_Bank_Logo.svg",
     "icbc":         "https://upload.wikimedia.org/wikipedia/commons/d/d8/ICBC_logo.svg",
     "scb":          "https://upload.wikimedia.org/wikipedia/commons/3/3d/Standard_Chartered_%28logo%29.svg",
