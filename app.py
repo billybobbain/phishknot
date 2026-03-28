@@ -282,6 +282,14 @@ def serve_interactive_graph():
   #graph { width: 100%; height: calc(100vh - 52px); }
   .legend { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
   .chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.12); padding: 4px 8px; border-radius: 999px; font-size: 12px; color: var(--muted); }
+  .match-card { border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; background: rgba(0,0,0,0.12); }
+  .match-card .mc-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 5px; }
+  .match-card .mc-tag { font-size: 11px; padding: 2px 7px; border-radius: 999px; }
+  .mc-tag.brand { background: rgba(46,204,113,0.18); color: #2ecc71; border: 1px solid rgba(46,204,113,0.3); }
+  .mc-tag.artist { background: rgba(230,126,34,0.18); color: #e67e22; border: 1px solid rgba(230,126,34,0.3); }
+  .match-card .mc-meta { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+  .match-card .mc-url { font-size: 11px; word-break: break-all; }
+  .match-card .mc-url a { color: var(--accent); }
   .node-chip { cursor: pointer; border: 1px solid rgba(255,255,255,0.15); background: rgba(255,255,255,0.05); padding: 3px 9px; border-radius: 999px; font-size: 11px; color: var(--muted); transition: background 0.15s, color 0.15s; white-space: nowrap; }
   .node-chip:hover { background: rgba(255,255,255,0.10); color: var(--text); }
   .node-chip.active-brand { background: rgba(46,204,113,0.25); border-color: #2ecc71; color: #2ecc71; }
@@ -424,9 +432,9 @@ def serve_interactive_graph():
       <div class="content"><pre id="keywordsPre"></pre></div>
     </details>
     <details>
-      <summary>Matches (URLs → brands/artists + provenance)</summary>
+      <summary>Matches</summary>
       <div class="content">
-        <div style="margin-bottom:8px;color:var(--muted)">Showing latest run matches. Use browser find to search within.</div>
+        <div id="matchesFilter" style="margin-bottom:8px;font-size:11px;color:var(--muted)">All matches — click a brand or artist chip to filter.</div>
         <div id="matchesTableWrap"></div>
       </div>
     </details>
@@ -492,35 +500,55 @@ function renderMeta(meta){
   el("keywordsPre").textContent = JSON.stringify(meta.keywords || {}, null, 2);
 }
 
-function renderMatches(matches){
-  if (!matches || !Array.isArray(matches.results)) {
-    el("matchesTableWrap").innerHTML = "<div style='color:var(--muted)'>No match data available.</div>";
-    return;
-  }
-  const rows = matches.results.slice(0, 250);
+function _buildMatchCards(rows) {
+  if (!rows.length) return "<div style='color:var(--muted);font-size:12px'>No matches.</div>";
   const html = [];
-  html.push("<table>");
-  html.push("<thead><tr><th>Brands</th><th>Artists</th><th>Provenance</th><th>Domain</th><th>URL</th></tr></thead><tbody>");
   for (const r of rows) {
-    const brands = (r.brands || []).join(", ");
-    const artists = (r.artists || []).map(a => a.name || a.artist_keyword).filter(Boolean).join(", ");
+    const brands = (r.brands || []);
+    const artists = (r.artists || []).map(a => a.name || a.artist_keyword).filter(Boolean);
     const md = r.match_detail || {};
     const prov = [
       (md.brands_in_url?.length ? `brands:url(${md.brands_in_url.length})` : ""),
       (md.brands_in_text?.length ? `brands:text(${md.brands_in_text.length})` : ""),
       (md.artists_in_url?.length ? `artists:url(${md.artists_in_url.length})` : ""),
       (md.artists_in_text?.length ? `artists:text(${md.artists_in_text.length})` : ""),
-    ].filter(Boolean).join(" • ");
-    html.push("<tr>");
-    html.push(`<td>${brands ? brands.slice(0, 120) : ""}</td>`);
-    html.push(`<td>${artists ? artists.slice(0, 120) : ""}</td>`);
-    html.push(`<td>${prov}</td>`);
-    html.push(`<td style="color:var(--muted);font-size:11px">${(r.domain || "").slice(0, 50)}</td>`);
-    html.push(`<td><a href="${r.url}" target="_blank" rel="noreferrer">${(r.url || "").slice(0, 80)}</a></td>`);
-    html.push("</tr>");
+    ].filter(Boolean).join(" · ");
+    html.push(`<div class="match-card">`);
+    html.push(`<div class="mc-tags">`);
+    brands.forEach(b => html.push(`<span class="mc-tag brand">${b}</span>`));
+    artists.forEach(a => html.push(`<span class="mc-tag artist">${a}</span>`));
+    html.push(`</div>`);
+    if (prov) html.push(`<div class="mc-meta">${prov} &nbsp;·&nbsp; ${r.domain || ""}</div>`);
+    html.push(`<div class="mc-url"><a href="${r.url}" target="_blank" rel="noreferrer noopener">${r.url || ""}</a></div>`);
+    html.push(`</div>`);
   }
-  html.push("</tbody></table>");
-  el("matchesTableWrap").innerHTML = html.join("");
+  return html.join("");
+}
+
+function renderMatches(matches){
+  if (!matches || !Array.isArray(matches.results)) {
+    el("matchesTableWrap").innerHTML = "<div style='color:var(--muted)'>No match data available.</div>";
+    return;
+  }
+  el("matchesTableWrap").innerHTML = _buildMatchCards(matches.results.slice(0, 250));
+}
+
+function filterMatches(label, type) {
+  if (!state.matches || !Array.isArray(state.matches.results)) return;
+  const filterEl = el("matchesFilter");
+  if (!label) {
+    el("matchesTableWrap").innerHTML = _buildMatchCards(state.matches.results.slice(0, 250));
+    if (filterEl) filterEl.textContent = "All matches — click a brand or artist chip to filter.";
+    return;
+  }
+  const lc = label.toLowerCase();
+  const filtered = state.matches.results.filter(r => {
+    if (type === "brand") return (r.brands || []).some(b => b.toLowerCase() === lc);
+    if (type === "artist") return (r.artists || []).some(a => (a.name || a.artist_keyword || "").toLowerCase() === lc);
+    return false;
+  });
+  el("matchesTableWrap").innerHTML = _buildMatchCards(filtered);
+  if (filterEl) filterEl.textContent = `Showing ${filtered.length} match${filtered.length !== 1 ? "es" : ""} for "${label}" — click chip again to clear.`;
 }
 
 function colorForType(t){
@@ -768,6 +796,7 @@ function handleChipClick(nodeId, colorClass, chip) {
     _activeChipId = null;
     const infoBox = el("chipInfo");
     if (infoBox) infoBox.style.display = "none";
+    filterMatches(null, null);
     return;
   }
 
@@ -785,6 +814,9 @@ function handleChipClick(nodeId, colorClass, chip) {
   });
 
   showNodeInfo(nodeId);
+  if (!state.data) return;
+  const n = state.data.nodes.find(x => x.id === nodeId);
+  if (n && (n.type === "brand" || n.type === "artist")) filterMatches(n.label, n.type);
 }
 
 async function refreshAll(){
