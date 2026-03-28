@@ -500,7 +500,7 @@ function renderMatches(matches){
   const rows = matches.results.slice(0, 250);
   const html = [];
   html.push("<table>");
-  html.push("<thead><tr><th>Domain</th><th>Brands</th><th>Artists</th><th>Provenance</th><th>URL</th></tr></thead><tbody>");
+  html.push("<thead><tr><th>Brands</th><th>Artists</th><th>Provenance</th><th>Domain</th><th>URL</th></tr></thead><tbody>");
   for (const r of rows) {
     const brands = (r.brands || []).join(", ");
     const artists = (r.artists || []).map(a => a.name || a.artist_keyword).filter(Boolean).join(", ");
@@ -512,10 +512,10 @@ function renderMatches(matches){
       (md.artists_in_text?.length ? `artists:text(${md.artists_in_text.length})` : ""),
     ].filter(Boolean).join(" • ");
     html.push("<tr>");
-    html.push(`<td>${(r.domain || "").slice(0, 50)}</td>`);
     html.push(`<td>${brands ? brands.slice(0, 120) : ""}</td>`);
     html.push(`<td>${artists ? artists.slice(0, 120) : ""}</td>`);
     html.push(`<td>${prov}</td>`);
+    html.push(`<td style="color:var(--muted);font-size:11px">${(r.domain || "").slice(0, 50)}</td>`);
     html.push(`<td><a href="${r.url}" target="_blank" rel="noreferrer">${(r.url || "").slice(0, 80)}</a></td>`);
     html.push("</tr>");
   }
