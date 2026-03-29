@@ -766,6 +766,7 @@ def serve_interactive_graph():
           <option value="network" selected>Network (force-directed)</option>
           <option value="3d">3D Perspective</option>
           <option value="julia">Julia set</option>
+          <option value="julia3d">3D Julia set</option>
           <option value="circle">Circle</option>
           <option value="grid">Grid</option>
         </select>
@@ -1268,6 +1269,74 @@ function run3DLayout() {
   baseLayout.run();
 }
 
+// 3D Julia: fetch Julia X/Y positions, then apply the same Z-assignment
+// and perspective projection as run3DLayout().
+async function run3DJuliaLayout() {
+  if (!cy) return;
+  stop3DRotation();
+  _3d_base = {};
+  const c    = _juliaGetC();
+  const res  = (el('juliaRes')  || {}).value || 600;
+  const iter = (el('juliaIter') || {}).value || 256;
+  const statusEl = el('runStatus');
+  const prev = statusEl ? statusEl.textContent : '';
+  if (statusEl) statusEl.textContent = 'Computing Julia\u20133D\u2026';
+  try {
+    const resp = await fetch(`/graph/julia?c=${encodeURIComponent(c)}&res=${res}&iter=${iter}`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+    const pos = data.positions || {};
+    cy.batch(() => {
+      cy.nodes().forEach(n => {
+        const p = pos[n.id()];
+        if (p) n.position({ x: p.x, y: p.y });
+      });
+    });
+  } catch (e) {
+    console.error('Julia-3D layout error:', e);
+    if (statusEl) statusEl.textContent = 'Julia-3D error: ' + e.message;
+    return;
+  }
+  if (statusEl) statusEl.textContent = prev;
+
+  // Same Z-assignment and rotation startup as run3DLayout()
+  const Z_BASE = { artist: 200, brand: 500, domain: 800, registered_domain: 1100 };
+  let maxDeg = 1;
+  cy.nodes().forEach(n => { if ((n.data('degree') || 0) > maxDeg) maxDeg = n.data('degree'); });
+  const visible = cy.nodes(':visible').filter(n => n.data('type') !== 'registered_domain');
+  let sumX = 0, sumY = 0;
+  visible.forEach(n => { sumX += n.position().x; sumY += n.position().y; });
+  const cx   = visible.length ? sumX / visible.length : 0;
+  const cy_c = visible.length ? sumY / visible.length : 0;
+  let maxR = 1;
+  visible.forEach(n => {
+    const dx = n.position().x - cx, dy = n.position().y - cy_c;
+    const r = Math.sqrt(dx*dx + dy*dy);
+    if (r > maxR) maxR = r;
+  });
+  const norm = Math.min(1, 400 / maxR);
+  visible.forEach(n => {
+    const degN = (n.data('degree') || 0) / maxDeg;
+    const z0 = Math.max(50, (Z_BASE[n.data('type')] ?? 800) - degN * 200);
+    _3d_base[n.id()] = {
+      x0: (n.position().x - cx) * norm,
+      y0: (n.position().y - cy_c) * norm,
+      z0,
+    };
+  });
+  const vp = cy.extent();
+  _3d_screenCx = (vp.x1 + vp.x2) / 2;
+  _3d_screenCy = (vp.y1 + vp.y2) / 2;
+  _3d_render_frame();
+  cy.fit(undefined, 60);
+  const vp2 = cy.extent();
+  _3d_screenCx = (vp2.x1 + vp2.x2) / 2;
+  _3d_screenCy = (vp2.y1 + vp2.y2) / 2;
+  _3d_enable_interaction();
+  start3DRotation();
+}
+
 // ── Mouse-drag rotation ──────────────────────────────────────────────────────
 // Drag left/right → Y-axis (angle); drag up/down → X-axis (tilt).
 // Dragging pauses the RAF loop; releasing resumes it if it was spinning.
@@ -1629,6 +1698,8 @@ function renderGraph(data){
       run3DLayout();
     } else if (currentPreset === "julia") {
       runJuliaLayout();
+    } else if (currentPreset === "julia3d") {
+      run3DJuliaLayout();
     } else {
       const l = cy.layout(getLayoutOpts());
       l.one('layoutstop', afterGroupsLayout);
@@ -1650,6 +1721,8 @@ function renderGraph(data){
     run3DLayout();
   } else if (currentPreset === "julia") {
     runJuliaLayout();
+  } else if (currentPreset === "julia3d") {
+    run3DJuliaLayout();
   } else {
     cy.one('layoutstop', afterGroupsLayout);
     cy.layout(getLayoutOpts()).run();
@@ -1982,11 +2055,11 @@ function applyCurrentLayout() {
   const preset = (presetEl && presetEl.value) ? presetEl.value : "network";
   // Show/hide rotate button; stop rotation when leaving 3D
   const rotateField = el('rotateField');
-  if (rotateField) rotateField.style.display = preset === '3d' ? '' : 'none';
+  if (rotateField) rotateField.style.display = (preset === '3d' || preset === 'julia3d') ? '' : 'none';
   // Show/hide Julia controls
   const juliaDetails = el('juliaDetails');
-  if (juliaDetails) juliaDetails.style.display = preset === 'julia' ? '' : 'none';
-  if (preset !== '3d') {
+  if (juliaDetails) juliaDetails.style.display = (preset === 'julia' || preset === 'julia3d') ? '' : 'none';
+  if (preset !== '3d' && preset !== 'julia3d') {
     stop3DRotation();
     _3d_disable_interaction();
     cy.nodes().removeStyle('width height opacity font-size');
@@ -1999,6 +2072,8 @@ function applyCurrentLayout() {
     run3DLayout();
   } else if (preset === "julia") {
     runJuliaLayout();
+  } else if (preset === "julia3d") {
+    run3DJuliaLayout();
   } else {
     const l = cy.layout(getLayoutOpts());
     l.one('layoutstop', afterGroupsLayout);
