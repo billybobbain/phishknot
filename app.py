@@ -682,6 +682,12 @@ def serve_interactive_graph():
         <button class="btn" id="fitGraph" style="flex:1">Fit</button>
       </div>
     </div>
+    <div class="field" id="rotateField" style="display:none">
+      <div class="label"> </div>
+      <div class="value">
+        <button class="btn" id="rotate3DBtn" style="width:100%">&#9654; Rotate</button>
+      </div>
+    </div>
     <div class="field">
       <div class="label">Search</div>
       <div class="value">
@@ -974,10 +980,59 @@ function afterGroupsLayout() {
   separateCompoundGroups();
 }
 
-// 3D Perspective preset: run CoSE for base X/Y, then assign Z by node type + degree,
-// apply perspective projection from centroid, scale size/opacity as depth cues.
+// ── 3D Perspective + rotation ────────────────────────────────────────────────
+// _3d_base: node_id → {x0, y0, z0} centered, pre-rotation, normalized to ±400
+// _3d_screenCx/Cy: viewport center for re-adding after projection
+let _3d_base = {}, _3d_screenCx = 0, _3d_screenCy = 0;
+let _3d_angle = 0, _3d_raf = null, _3d_spinning = false;
+const FOCAL_3D = 2000;   // focal length; safe with positions ≤400 and z range 200-1100
+const ROT_SPEED = 0.007; // ~0.4°/frame @ 60fps ≈ one full spin ~15s
+
+function stop3DRotation() {
+  if (_3d_raf) { cancelAnimationFrame(_3d_raf); _3d_raf = null; }
+  _3d_spinning = false;
+  const btn = el('rotate3DBtn');
+  if (btn) btn.innerHTML = '&#9654; Rotate';
+}
+
+function _apply3DFrame() {
+  if (!cy || !_3d_spinning) return;
+  _3d_angle += ROT_SPEED;
+  const cosA = Math.cos(_3d_angle), sinA = Math.sin(_3d_angle);
+  cy.batch(() => {
+    cy.nodes(':visible').filter(n => n.data('type') !== 'registered_domain').forEach(n => {
+      const b = _3d_base[n.id()];
+      if (!b) return;
+      const xr = b.x0 * cosA + b.z0 * sinA;  // Y-axis rotation
+      const zr = -b.x0 * sinA + b.z0 * cosA;
+      const s  = FOCAL_3D / (FOCAL_3D + zr);
+      n.position({ x: _3d_screenCx + xr * s, y: _3d_screenCy + b.y0 * s });
+      n.style({
+        'width':     Math.max(5, (n.data('size')      || 34) * s),
+        'height':    Math.max(5, (n.data('size')      || 34) * s),
+        'opacity':   Math.max(0.15, 0.3 + s * 0.7),
+        'font-size': Math.max(5, (n.data('font_size') || 10) * s),
+      });
+    });
+  });
+  _3d_raf = requestAnimationFrame(_apply3DFrame);
+}
+
+function start3DRotation() {
+  stop3DRotation();
+  if (!Object.keys(_3d_base).length) return;
+  _3d_spinning = true;
+  const btn = el('rotate3DBtn');
+  if (btn) btn.innerHTML = '&#9646;&#9646; Pause';
+  _3d_raf = requestAnimationFrame(_apply3DFrame);
+}
+
+// 3D Perspective preset: run CoSE for base X/Y, assign Z by node type + degree,
+// normalize positions, store in _3d_base, then start rotation loop.
 function run3DLayout() {
   if (!cy) return;
+  stop3DRotation();
+  _3d_base = {};
   const baseLayout = cy.layout({
     name: 'cose',
     animate: false,
@@ -988,38 +1043,64 @@ function run3DLayout() {
     componentSpacing: 80,
   });
   baseLayout.one('layoutstop', () => {
-    const Z_BASE = { artist: 0, brand: 300, domain: 600, registered_domain: 900 };
-    const FOCAL = 1000;
+    const Z_BASE = { artist: 200, brand: 500, domain: 800, registered_domain: 1100 };
     let maxDeg = 1;
     cy.nodes().forEach(n => { if ((n.data('degree') || 0) > maxDeg) maxDeg = n.data('degree'); });
 
-    // Centroid of visible nodes (excluding compound parents — their pos is derived from children)
-    let sumX = 0, sumY = 0, count = 0;
-    cy.nodes(':visible').filter(n => n.data('type') !== 'registered_domain').forEach(n => {
-      sumX += n.position().x; sumY += n.position().y; count++;
-    });
-    if (count === 0) { cy.fit(undefined, 40); return; }
-    const cx = sumX / count, cy_c = sumY / count;
+    const visible = cy.nodes(':visible').filter(n => n.data('type') !== 'registered_domain');
 
+    // Centroid
+    let sumX = 0, sumY = 0;
+    visible.forEach(n => { sumX += n.position().x; sumY += n.position().y; });
+    const cx = visible.length ? sumX / visible.length : 0;
+    const cy_c = visible.length ? sumY / visible.length : 0;
+
+    // Max extent — normalize so positions fit in ±400 (keeps FOCAL_3D safe)
+    let maxR = 1;
+    visible.forEach(n => {
+      const dx = n.position().x - cx, dy = n.position().y - cy_c;
+      const r = Math.sqrt(dx*dx + dy*dy);
+      if (r > maxR) maxR = r;
+    });
+    const norm = Math.min(1, 400 / maxR);
+
+    // Store base 3D coords and apply initial (θ=0) perspective
+    visible.forEach(n => {
+      const degN = (n.data('degree') || 0) / maxDeg;
+      const z0 = Math.max(50, (Z_BASE[n.data('type')] ?? 800) - degN * 200);
+      const x0 = (n.position().x - cx) * norm;
+      const y0 = (n.position().y - cy_c) * norm;
+      _3d_base[n.id()] = { x0, y0, z0 };
+    });
+
+    // Screen center: middle of viewport
+    const vp = cy.extent();
+    _3d_screenCx = (vp.x1 + vp.x2) / 2;
+    _3d_screenCy = (vp.y1 + vp.y2) / 2;
+
+    // Apply initial frame (θ=0), then fit and start spinning
+    const cosA = Math.cos(_3d_angle), sinA = Math.sin(_3d_angle);
     cy.batch(() => {
-      cy.nodes(':visible').filter(n => n.data('type') !== 'registered_domain').forEach(n => {
-        const type = n.data('type') || 'domain';
-        const degN = (n.data('degree') || 0) / maxDeg;
-        const z = Math.max(0, (Z_BASE[type] ?? 600) - degN * 200);
-        const scale = FOCAL / (FOCAL + z);
-        const pos = n.position();
-        n.position({ x: cx + (pos.x - cx) * scale, y: cy_c + (pos.y - cy_c) * scale });
-        const baseSize    = n.data('size')      || 34;
-        const baseFontSz  = n.data('font_size') || 10;
+      visible.forEach(n => {
+        const b = _3d_base[n.id()];
+        const xr = b.x0 * cosA + b.z0 * sinA;
+        const zr = -b.x0 * sinA + b.z0 * cosA;
+        const s  = FOCAL_3D / (FOCAL_3D + zr);
+        n.position({ x: _3d_screenCx + xr * s, y: _3d_screenCy + b.y0 * s });
         n.style({
-          'width':     Math.max(6,  baseSize   * scale),
-          'height':    Math.max(6,  baseSize   * scale),
-          'opacity':   Math.max(0.2, 0.3 + scale * 0.7),
-          'font-size': Math.max(6,  baseFontSz * scale),
+          'width':     Math.max(5, (n.data('size')      || 34) * s),
+          'height':    Math.max(5, (n.data('size')      || 34) * s),
+          'opacity':   Math.max(0.15, 0.3 + s * 0.7),
+          'font-size': Math.max(5, (n.data('font_size') || 10) * s),
         });
       });
     });
-    cy.fit(undefined, 40);
+    cy.fit(undefined, 60);
+    // Update screen center post-fit so rotation stays centered
+    const vp2 = cy.extent();
+    _3d_screenCx = (vp2.x1 + vp2.x2) / 2;
+    _3d_screenCy = (vp2.y1 + vp2.y2) / 2;
+    start3DRotation();
   });
   baseLayout.run();
 }
@@ -1277,6 +1358,7 @@ function renderGraph(data){
   const currentPreset = (presetEl && presetEl.value) ? presetEl.value : "groups";
 
   if (cy) {
+    stop3DRotation();
     if (currentPreset !== '3d') cy.nodes().removeStyle('width height opacity font-size');
     cy.batch(() => {
       cy.elements().remove();
@@ -1499,8 +1581,13 @@ function applyCurrentLayout() {
   if (!cy || cy.elements().length === 0) return;
   const presetEl = el("layoutPreset");
   const preset = (presetEl && presetEl.value) ? presetEl.value : "network";
-  // Reset any inline 3D depth styles when switching to a non-3D layout
-  if (preset !== '3d') cy.nodes().removeStyle('width height opacity font-size');
+  // Show/hide rotate button; stop rotation when leaving 3D
+  const rotateField = el('rotateField');
+  if (rotateField) rotateField.style.display = preset === '3d' ? '' : 'none';
+  if (preset !== '3d') {
+    stop3DRotation();
+    cy.nodes().removeStyle('width height opacity font-size');
+  }
   if (preset === "groups") {
     runGroupsLayout();
   } else if (preset === "3d") {
@@ -1530,6 +1617,10 @@ const rerunLayout = el("rerunLayout");
 if (rerunLayout) rerunLayout.addEventListener("click", applyCurrentLayout);
 const fitGraph = el("fitGraph");
 if (fitGraph) fitGraph.addEventListener("click", () => { if (cy) cy.fit(undefined, 40); });
+const rotate3DBtn = el('rotate3DBtn');
+if (rotate3DBtn) rotate3DBtn.addEventListener('click', () => {
+  if (_3d_spinning) stop3DRotation(); else start3DRotation();
+});
 
 
 refreshAll().then(() => {
