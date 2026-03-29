@@ -1063,20 +1063,38 @@ function start3DRotation() {
   _3d_raf = requestAnimationFrame(_apply3DFrame);
 }
 
+let _3d_wheel_handler = null;
+
 function _3d_enable_interaction() {
   if (!cy) return;
   cy.userPanningEnabled(false);
+  cy.userZoomingEnabled(false);   // disable cy's mouse-position zoom (causes translation)
   cy.nodes().ungrabify();
   const g = el('graph');
-  if (g) g.style.cursor = 'grab';
+  if (!g) return;
+  g.style.cursor = 'grab';
+  // Replace with viewport-center zoom so scroll never translates the graph
+  _3d_wheel_handler = (e) => {
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.15 : (1 / 1.15);
+    cy.zoom({ level: cy.zoom() * factor,
+              renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } });
+  };
+  g.addEventListener('wheel', _3d_wheel_handler, { passive: false });
 }
 
 function _3d_disable_interaction() {
   if (!cy) return;
   cy.userPanningEnabled(true);
+  cy.userZoomingEnabled(true);
   cy.nodes().grabify();
   const g = el('graph');
-  if (g) g.style.cursor = '';
+  if (!g) return;
+  g.style.cursor = '';
+  if (_3d_wheel_handler) {
+    g.removeEventListener('wheel', _3d_wheel_handler);
+    _3d_wheel_handler = null;
+  }
 }
 
 // 3D Perspective preset: run CoSE for base X/Y, assign Z by node type + degree,
