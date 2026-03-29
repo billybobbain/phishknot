@@ -158,32 +158,60 @@ def campaigns_page():
 </header>
 <div class="page">
   <h1>Campaigns</h1>
-  <div class="subtitle" id="subtitle">Loading campaign data…</div>
+  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:16px">
+    <div class="subtitle" id="subtitle">Loading campaign data…</div>
+    <div style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)">
+      Sort:
+      <select id="sortMode" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:13px">
+        <option value="last_seen">Last seen</option>
+        <option value="first_seen">First seen</option>
+        <option value="brand_count">Brand count</option>
+        <option value="url_count">URL count</option>
+      </select>
+    </div>
+  </div>
   <div class="grid" id="grid"><div id="loading">Loading…</div></div>
 </div>
 <script>
-async function load() {
-  const resp = await fetch("/campaigns/data");
-  const data = await resp.json();
-  const campaigns = data.campaigns || [];
-  const subtitle = document.getElementById("subtitle");
-  const grid = document.getElementById("grid");
-  subtitle.textContent = `${campaigns.length} artist-led campaign${campaigns.length !== 1 ? "s" : ""} detected across ${data.total_brands || "?"} brands`;
-  if (!campaigns.length) { grid.innerHTML = "<div style='color:var(--muted)'>No campaigns found. Run the pipeline with NO_DOWNLOAD=0 to detect campaigns.</div>"; return; }
-  grid.innerHTML = campaigns.map(c => {
+let _campaigns = [];
+
+function sortAndRender() {
+  const mode = document.getElementById("sortMode").value;
+  const sorted = [..._campaigns].sort((a, b) => {
+    if (mode === "last_seen")   return (b.last_seen || "") < (a.last_seen || "") ? -1 : 1;
+    if (mode === "first_seen")  return (a.first_seen || "") > (b.first_seen || "") ? -1 : 1;
+    if (mode === "brand_count") return b.brand_count - a.brand_count;
+    if (mode === "url_count")   return b.url_count - a.url_count;
+    return 0;
+  });
+  document.getElementById("grid").innerHTML = sorted.map(c => {
     const img = c.image_url ? `<img class="avatar" src="${c.image_url}" alt="${c.label}" onerror="this.style.display='none'">` : `<div class="avatar" style="display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px;color:var(--artist)">${(c.label||"?")[0].toUpperCase()}</div>`;
     const brands = (c.brands || []).map(b => `<span class="brand-tag">${b}</span>`).join("");
     const stats = `${c.url_count} URL${c.url_count !== 1 ? "s" : ""} · ${c.brand_count} brand${c.brand_count !== 1 ? "s" : ""}`;
+    const dates = (c.first_seen || c.last_seen)
+      ? `<div style="font-size:11px;color:var(--muted);margin-top:2px">First: ${c.first_seen || "?"} · Last: ${c.last_seen || "?"}</div>`
+      : "";
     const exploreHref = `/graph/interactive?focus_artist=${encodeURIComponent(c.label)}`;
     const thumb = c.thumb_url ? `<a class="card-thumb-link" href="${exploreHref}"><img class="card-thumb" src="${c.thumb_url}" alt="${c.label} campaign" onerror="this.parentElement.style.display='none'"></a>` : "";
     return `<div class="card">
       ${thumb}
       <div class="card-body">
-        <div class="card-header">${img}<div><div class="card-title">${c.label}</div><div class="card-stats">${stats}</div></div></div>
+        <div class="card-header">${img}<div><div class="card-title">${c.label}</div><div class="card-stats">${stats}</div>${dates}</div></div>
         <div class="brands">${brands || "<span style='color:var(--muted);font-size:11px'>No brands</span>"}</div>
       </div>
     </div>`;
   }).join("");
+}
+
+async function load() {
+  const resp = await fetch("/campaigns/data");
+  const data = await resp.json();
+  _campaigns = data.campaigns || [];
+  const subtitle = document.getElementById("subtitle");
+  subtitle.textContent = `${_campaigns.length} artist-led campaign${_campaigns.length !== 1 ? "s" : ""} detected across ${data.total_brands || "?"} brands`;
+  if (!_campaigns.length) { document.getElementById("grid").innerHTML = "<div style='color:var(--muted)'>No campaigns found.</div>"; return; }
+  sortAndRender();
+  document.getElementById("sortMode").addEventListener("change", sortAndRender);
 }
 load().catch(e => { document.getElementById("grid").innerHTML = `<div style='color:#ffb3b3'>Error: ${e.message}</div>`; });
 </script>
@@ -249,9 +277,27 @@ def campaigns_data():
                     "brand_count": len(brands),
                     "url_count": url_count,
                     "popularity": int(data.get("popularity") or 0),
+                    "first_seen": None,
+                    "last_seen": None,
                 })
 
-        campaigns.sort(key=lambda c: (-c["brand_count"], -c["url_count"]))
+        # Pull first/last seen from url_history for each artist
+        try:
+            import sqlite3 as _sqlite3
+            with _sqlite3.connect(str(DATA_DIR / "url_history.db")) as _conn:
+                for c in campaigns:
+                    _lbl = c["label"]
+                    row = _conn.execute(
+                        "SELECT MIN(first_seen), MAX(last_seen) FROM url_history "
+                        "WHERE artists LIKE ?", (f'%"{_lbl}"%',)
+                    ).fetchone()
+                    if row and row[0]:
+                        c["first_seen"] = row[0][:10]
+                        c["last_seen"] = row[1][:10]
+        except Exception:
+            pass
+
+        campaigns.sort(key=lambda c: (-(c["last_seen"] or ""), -c["brand_count"], -c["url_count"]))
         return jsonify({"campaigns": campaigns, "total_brands": len(brand_set)})
     except Exception as e:
         return jsonify({"campaigns": [], "error": str(e)})
