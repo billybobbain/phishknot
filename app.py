@@ -754,6 +754,46 @@ function layoutCompoundChildren() {
   });
 }
 
+// After layoutCompoundChildren expands children into circles, compound bounding boxes
+// may still overlap because CoSE placed the group centers close. This iteratively
+// pushes overlapping groups apart until none of their bounding boxes touch.
+function separateCompoundGroups() {
+  if (!cy) return;
+  const parents = cy.nodes('[type="registered_domain"]').filter(':visible');
+  if (parents.length < 2) return;
+  const PADDING = 60;
+  let anyOverlap = true;
+  let iters = 0;
+  while (anyOverlap && iters < 80) {
+    anyOverlap = false;
+    iters++;
+    for (let i = 0; i < parents.length; i++) {
+      for (let j = i + 1; j < parents.length; j++) {
+        const a = parents[i], b = parents[j];
+        const ba = a.boundingBox(), bb = b.boundingBox();
+        const ox = Math.min(ba.x2, bb.x2) - Math.max(ba.x1, bb.x1);
+        const oy = Math.min(ba.y2, bb.y2) - Math.max(ba.y1, bb.y1);
+        if (ox <= 0 || oy <= 0) continue;
+        anyOverlap = true;
+        const cax = (ba.x1 + ba.x2) / 2, cay = (ba.y1 + ba.y2) / 2;
+        const cbx = (bb.x1 + bb.x2) / 2, cby = (bb.y1 + bb.y2) / 2;
+        let dx = cbx - cax, dy = cby - cay;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        dx /= dist; dy /= dist;
+        // Push along the axis of least overlap so movement is minimal
+        const push = (ox < oy ? ox : oy) / 2 + PADDING / 2;
+        a.children().forEach(c => c.position({ x: c.position('x') - dx * push, y: c.position('y') - dy * push }));
+        b.children().forEach(c => c.position({ x: c.position('x') + dx * push, y: c.position('y') + dy * push }));
+      }
+    }
+  }
+}
+
+function afterGroupsLayout() {
+  layoutCompoundChildren();
+  separateCompoundGroups();
+}
+
 function _coseRepulsionOpts() {
   return {
     nodeRepulsion: parseInt(el("coseRepulsion")?.value || "55000", 10),
@@ -945,7 +985,7 @@ function renderGraph(data){
       cy.add(elements);
     });
     const l = cy.layout(layoutOpts);
-    l.one('layoutstop', layoutCompoundChildren);
+    l.one('layoutstop', afterGroupsLayout);
     l.run();
     return;
   }
@@ -957,7 +997,7 @@ function renderGraph(data){
     style: cyStyle,
     layout: layoutOpts,
   });
-  cy.one('layoutstop', layoutCompoundChildren);
+  cy.one('layoutstop', afterGroupsLayout);
 
   cy.on("tap", "node", (evt) => {
     const node = evt.target;
