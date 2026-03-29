@@ -12,6 +12,9 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
+import math
+import random
+
 from flask import Flask, send_from_directory, abort, jsonify, request
 
 # Output dir for pipeline and images (must be set before importing phishing_brand_graph in the worker)
@@ -28,6 +31,91 @@ app = Flask(__name__)
 
 # Safe filename: alphanumeric, underscore, hyphen, one dot
 SAFE_FILENAME = re.compile(r"^[a-zA-Z0-9_.-]+$")
+
+# ---------------------------------------------------------------------------
+# Julia set layout helpers (used by /graph/julia)
+# ---------------------------------------------------------------------------
+
+_JULIA_TYPE_POOL_ORDER = {
+    'artist':            ['boundary', 'near'],
+    'brand':             ['near', 'boundary', 'mid'],
+    'domain':            ['mid', 'near', 'far'],
+    'registered_domain': ['interior', 'mid'],
+    'phishing_url':      ['far', 'mid'],
+}
+
+
+def _julia_iter_map(c, res=600, max_iter=256, extent=2.0):
+    """Vectorised escape-time map for f(z) = z² + c."""
+    import numpy as np
+    re_axis = np.linspace(-extent, extent, res, dtype=np.float64)
+    im_axis = np.linspace( extent,-extent, res, dtype=np.float64)
+    Z = re_axis[np.newaxis, :] + 1j * im_axis[:, np.newaxis]
+    iters   = np.full(Z.shape, max_iter, dtype=np.int32)
+    escaped = np.zeros(Z.shape, dtype=bool)
+    for i in range(1, max_iter + 1):
+        mask = ~escaped
+        Z[mask] = Z[mask] ** 2 + c
+        new_esc = mask & (np.abs(Z) > 2.0)
+        iters[new_esc] = i
+        escaped |= new_esc
+    return iters
+
+
+def _julia_build_pools(iters, res, extent, max_iter, rng, downsample=4):
+    import numpy as np
+    re_axis = np.linspace(-extent, extent, res)
+    im_axis = np.linspace( extent,-extent, res)
+
+    def mask_to_pts(mask):
+        rows, cols = np.where(mask)
+        keep = (rows % downsample == 0) & (cols % downsample == 0)
+        rows, cols = rows[keep], cols[keep]
+        pts = list(zip(re_axis[cols].tolist(), im_axis[rows].tolist()))
+        rng.shuffle(pts)
+        return pts
+
+    b_hi = max(2, max_iter // 30)
+    n_hi = max_iter // 6
+    m_hi = max_iter // 2
+    return {
+        'interior': mask_to_pts(iters == max_iter),
+        'boundary': mask_to_pts((iters >= 1)    & (iters < b_hi)),
+        'near':     mask_to_pts((iters >= b_hi)  & (iters < n_hi)),
+        'mid':      mask_to_pts((iters >= n_hi)  & (iters < m_hi)),
+        'far':      mask_to_pts(iters >= m_hi),
+    }
+
+
+def _julia_assign_positions(G, pools, rng, scale=400):
+    import networkx as nx
+    deg = dict(G.degree())
+    nodes_by_type = {}
+    for n, d in G.nodes(data=True):
+        t = d.get('type', 'domain')
+        nodes_by_type.setdefault(t, []).append((n, d))
+    for t in nodes_by_type:
+        nodes_by_type[t].sort(key=lambda x: -deg.get(x[0], 0))
+
+    pool_iters = {k: iter(v) for k, v in pools.items()}
+
+    def next_pt(pool_order):
+        for pname in pool_order:
+            try:
+                return next(pool_iters[pname])
+            except StopIteration:
+                continue
+        angle = rng.uniform(0, 2 * math.pi)
+        r = rng.uniform(0, 1.5)
+        return (r * math.cos(angle), r * math.sin(angle))
+
+    positions = {}
+    for t, node_list in nodes_by_type.items():
+        pool_order = _JULIA_TYPE_POOL_ORDER.get(t, ['mid', 'far'])
+        for n, _ in node_list:
+            cx, cy_val = next_pt(pool_order)
+            positions[n] = {'x': round(cx * scale, 2), 'y': round(cy_val * scale, 2)}
+    return positions
 SAFE_ID = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 # Spotify artist images: browser + Cytoscape canvas need same-origin or CORS; Spotify CDN often omits CORS.
@@ -677,6 +765,7 @@ def serve_interactive_graph():
           <option value="campaign">Campaign (concentric)</option>
           <option value="network" selected>Network (force-directed)</option>
           <option value="3d">3D Perspective</option>
+          <option value="julia">Julia set</option>
           <option value="circle">Circle</option>
           <option value="grid">Grid</option>
         </select>
@@ -701,6 +790,39 @@ def serve_interactive_graph():
         <input id="searchBox" type="text" placeholder="Find node label (e.g., ccb / Yeat / domain)" />
       </div>
     </div>
+
+    <details id="juliaDetails" style="display:none">
+      <summary style="cursor:pointer;color:var(--muted);font-size:13px;padding:6px 0">Julia set c</summary>
+      <div style="padding:4px 0">
+        <div class="field"><div class="label" style="font-size:12px">Preset</div>
+          <div class="value">
+            <select id="juliaCPreset" style="width:100%" onchange="onJuliaCPresetChange()">
+              <option value="-0.7+0.27j">Classic dendrite</option>
+              <option value="-0.4+0.6j">Douady&#39;s rabbit</option>
+              <option value="0.285+0.01j">Cauliflower</option>
+              <option value="-0.835-0.2321j">Fine filaments</option>
+              <option value="-1.755+0j">Airplane</option>
+              <option value="-2.1+0j">Cantor dust</option>
+              <option value="0+1j">Unit circle</option>
+              <option value="-1+0j">Basilica</option>
+              <option value="custom">Custom&hellip;</option>
+            </select>
+          </div>
+        </div>
+        <div class="field" id="juliaCCustomField" style="display:none">
+          <div class="label" style="font-size:12px">c (a+bj)</div>
+          <div class="value">
+            <input id="juliaCCustom" type="text" value="-0.7+0.27j" placeholder="-0.7+0.27j" style="width:100%">
+          </div>
+        </div>
+        <div class="field"><div class="label" style="font-size:12px">Resolution</div>
+          <div class="value"><input id="juliaRes" type="range" min="200" max="800" step="100" value="600" style="width:100%">
+          <span id="juliaResVal" style="font-size:11px;color:var(--muted)">600</span></div></div>
+        <div class="field"><div class="label" style="font-size:12px">Max iter</div>
+          <div class="value"><input id="juliaIter" type="range" min="64" max="512" step="64" value="256" style="width:100%">
+          <span id="juliaIterVal" style="font-size:11px;color:var(--muted)">256</span></div></div>
+      </div>
+    </details>
 
     <details id="coseDetails">
       <summary style="cursor:pointer;color:var(--muted);font-size:13px;padding:6px 0">CoSE tuning</summary>
@@ -1241,6 +1363,53 @@ function runGroupsLayout() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Julia set layout
+// ---------------------------------------------------------------------------
+
+function onJuliaCPresetChange() {
+  const sel = el('juliaCPreset');
+  const customField = el('juliaCCustomField');
+  if (sel && customField) customField.style.display = sel.value === 'custom' ? '' : 'none';
+}
+
+function _juliaGetC() {
+  const sel = el('juliaCPreset');
+  if (!sel || sel.value === 'custom') {
+    return (el('juliaCCustom') || {}).value || '-0.7+0.27j';
+  }
+  return sel.value;
+}
+
+async function runJuliaLayout() {
+  if (!cy || cy.elements().length === 0) return;
+  const c   = _juliaGetC();
+  const res  = (el('juliaRes')  || {}).value || 600;
+  const iter = (el('juliaIter') || {}).value || 256;
+  const statusEl = el('runStatus');
+  const prev = statusEl ? statusEl.textContent : '';
+  if (statusEl) statusEl.textContent = 'Computing Julia layout\u2026';
+  try {
+    const resp = await fetch(`/graph/julia?c=${encodeURIComponent(c)}&res=${res}&iter=${iter}`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+    const pos = data.positions || {};
+    cy.batch(() => {
+      cy.nodes().forEach(n => {
+        const p = pos[n.id()];
+        if (p) n.position({ x: p.x, y: p.y });
+      });
+    });
+    cy.fit(undefined, 40);
+  } catch (e) {
+    console.error('Julia layout error:', e);
+    if (statusEl) statusEl.textContent = 'Julia error: ' + e.message;
+    return;
+  }
+  if (statusEl) statusEl.textContent = prev;
+}
+
 function _coseRepulsionOpts() {
   return {
     nodeRepulsion: parseInt(el("coseRepulsion")?.value || "55000", 10),
@@ -1458,6 +1627,8 @@ function renderGraph(data){
       runGroupsLayout();
     } else if (currentPreset === "3d") {
       run3DLayout();
+    } else if (currentPreset === "julia") {
+      runJuliaLayout();
     } else {
       const l = cy.layout(getLayoutOpts());
       l.one('layoutstop', afterGroupsLayout);
@@ -1477,6 +1648,8 @@ function renderGraph(data){
     runGroupsLayout();
   } else if (currentPreset === "3d") {
     run3DLayout();
+  } else if (currentPreset === "julia") {
+    runJuliaLayout();
   } else {
     cy.one('layoutstop', afterGroupsLayout);
     cy.layout(getLayoutOpts()).run();
@@ -1810,6 +1983,9 @@ function applyCurrentLayout() {
   // Show/hide rotate button; stop rotation when leaving 3D
   const rotateField = el('rotateField');
   if (rotateField) rotateField.style.display = preset === '3d' ? '' : 'none';
+  // Show/hide Julia controls
+  const juliaDetails = el('juliaDetails');
+  if (juliaDetails) juliaDetails.style.display = preset === 'julia' ? '' : 'none';
   if (preset !== '3d') {
     stop3DRotation();
     _3d_disable_interaction();
@@ -1821,6 +1997,8 @@ function applyCurrentLayout() {
     runGroupsLayout();
   } else if (preset === "3d") {
     run3DLayout();
+  } else if (preset === "julia") {
+    runJuliaLayout();
   } else {
     const l = cy.layout(getLayoutOpts());
     l.one('layoutstop', afterGroupsLayout);
@@ -1838,6 +2016,8 @@ if (searchBox) searchBox.addEventListener("keydown", (ev) => { if (ev.key === "E
   ["coseEdgeLen",   "coseEdgeLenVal",   v => v],
   ["coseGravity",   "coseGravityVal",   v => (parseInt(v,10)/100).toFixed(2)],
   ["coseIter",      "coseIterVal",      v => v],
+  ["juliaRes",      "juliaResVal",      v => v],
+  ["juliaIter",     "juliaIterVal",     v => v],
 ].forEach(([sliderId, valId, fmt]) => {
   const s = el(sliderId);
   if (s) s.addEventListener("input", () => { const v = el(valId); if(v) v.textContent = fmt(s.value); });
@@ -2256,6 +2436,71 @@ def graph_data():
         })
     except Exception as e:
         return jsonify({"title": "Phishing graph", "nodes": [], "edges": [], "error": str(e)})
+
+
+@app.route("/graph/julia")
+def graph_julia():
+    """
+    Compute Julia set node positions and return {node_id: {x, y}}.
+    Query params:
+      c        — complex number string, Python notation e.g. -0.7+0.27j  (default -0.7+0.27j)
+      res      — grid resolution (default 600, max 1000)
+      iter     — max iterations (default 256, max 512)
+      seed     — RNG seed (default 42)
+      scale    — pixels per complex-plane unit (default 400)
+      view     — passed to the subgraph selector (default focus)
+      max_nodes— (default 500)
+    """
+    try:
+        import numpy as np
+        from phishing_brand_graph import _focus_subgraph, _subgraph_for_display
+
+        c_str = (request.args.get("c") or "-0.7+0.27j").strip()
+        try:
+            c_val = complex(c_str.replace('i', 'j'))
+        except ValueError:
+            return jsonify({"error": f"Invalid c value: {c_str!r}"}), 400
+
+        try:
+            res = max(200, min(1000, int(request.args.get("res", 600))))
+        except Exception:
+            res = 600
+        try:
+            max_iter = max(64, min(512, int(request.args.get("iter", 256))))
+        except Exception:
+            max_iter = 256
+        try:
+            seed = int(request.args.get("seed", 42))
+        except Exception:
+            seed = 42
+        try:
+            scale = max(100, min(1200, int(request.args.get("scale", 400))))
+        except Exception:
+            scale = 400
+        try:
+            max_nodes = max(10, min(5000, int(request.args.get("max_nodes", 500))))
+        except Exception:
+            max_nodes = 500
+
+        gexf_path = _pick_dataset_gexf(False)
+        G = _load_graph_from_gexf(gexf_path)
+        if G is None:
+            return jsonify({"error": "No graph data available yet."}), 503
+
+        H = _focus_subgraph(G)
+        H = _subgraph_for_display(H, max_nodes)
+        if H.number_of_nodes() == 0:
+            return jsonify({"positions": {}})
+
+        iters = _julia_iter_map(c_val, res=res, max_iter=max_iter)
+        rng   = random.Random(seed)
+        pools = _julia_build_pools(iters, res, 2.0, max_iter, rng)
+        pos   = _julia_assign_positions(H, pools, rng, scale=scale)
+
+        return jsonify({"c": str(c_val), "positions": pos})
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/image-proxy")
