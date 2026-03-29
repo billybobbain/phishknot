@@ -1067,6 +1067,37 @@ def fetch_phishtank_urls():
     return urls
 
 
+def fetch_phishstats_urls(pages=None):
+    """Fetch recent US phishing URLs from PhishStats API (free, no auth, 20 req/min).
+    pages: number of pages to fetch at 100 URLs/page. Defaults to PHISHSTATS_PAGES env var or 10.
+    Sleeps 3s between pages to stay within rate limit."""
+    import time
+    max_pages = int(os.environ.get("PHISHSTATS_PAGES", pages or 10))
+    base = "https://api.phishstats.info/api/phishing"
+    params_base = {"_sort": "-date", "_where": "(score,gt,2)", "_size": 100}
+    urls = []
+    for page in range(1, max_pages + 1):
+        try:
+            params = {**params_base, "_p": page}
+            r = requests.get(base, params=params, timeout=30, headers={"User-Agent": USER_AGENT})
+            r.raise_for_status()
+            data = r.json()
+            if not data:
+                break
+            for entry in data:
+                u = entry.get("url") if isinstance(entry, dict) else None
+                if u:
+                    urls.append(u.strip())
+            if len(data) < 100:
+                break  # last page
+            if page < max_pages:
+                time.sleep(3)  # stay under 20 req/min
+        except Exception as e:
+            print(f"PhishStats page {page} failed: {e}")
+            break
+    return urls
+
+
 def download_page(url):
     """Download HTML for a URL; return (status_ok, html_text, truncated). Size and redirects limited."""
     try:
@@ -2254,6 +2285,14 @@ def main():
                 print(f"PhishTank: got {len(pt_urls)} URLs, history merge touched {npt}.")
             except Exception as e:
                 print(f"PhishTank fetch failed (optional): {e}")
+        try:
+            pages = int(os.environ.get("PHISHSTATS_PAGES", 10))
+            print(f"Fetching PhishStats ({pages} pages × 100 URLs)...")
+            ps_urls = fetch_phishstats_urls(pages=pages)
+            nps = merge_urls_into_history(ps_urls, source="phishstats")
+            print(f"PhishStats: got {len(ps_urls)} URLs, history merge touched {nps}.")
+        except Exception as e:
+            print(f"PhishStats fetch failed (optional): {e}")
         urls = get_urls_from_history(limit=MAX_URLS_FROM_HISTORY, since_days=PROCESS_LAST_DAYS)
         print(f"URL history: {len(urls)} URLs to process (USE_URL_HISTORY=True).")
     else:
