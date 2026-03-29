@@ -1619,6 +1619,7 @@ let _tl_range  = { min: 0, max: 0 };
 let _tl_playing = false;
 let _tl_raf_id  = null;
 let _tl_last_wall = 0;       // wall-clock ms of last RAF call
+let _tl_scrub_pending = false; // RAF gate for slider input — avoids mid-batch pile-up
 
 function _tl_fmt_date(ms) {
   if (!ms) return "—";
@@ -1735,7 +1736,12 @@ function initTimeline(nodes) {
     tlPause();
     const frac = slider.value / 10000;
     _tl_playhead = _tl_range.min + frac * (_tl_range.max - _tl_range.min);
-    _tl_apply_playhead();
+    // Gate apply through RAF — playhead is always current, but the expensive
+    // batch + 3D render runs at most once per frame no matter how fast the scrub.
+    if (!_tl_scrub_pending) {
+      _tl_scrub_pending = true;
+      requestAnimationFrame(() => { _tl_scrub_pending = false; _tl_apply_playhead(); });
+    }
   });
 })();
 
