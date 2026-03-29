@@ -507,7 +507,7 @@ def serve_interactive_graph():
       <div class="value">
         <select id="viewMode">
           <option value="brand_artist">Brands + Artists (co-mentioned)</option>
-          <option value="focus">Brands + Artists + Domains</option>
+          <option value="focus" selected>Brands + Artists + Domains</option>
         </select>
       </div>
     </div>
@@ -521,8 +521,8 @@ def serve_interactive_graph():
       <div class="label">Lens</div>
       <div class="value">
         <div class="lens-group">
-          <button class="lens-btn active" data-lens="both" type="button">Both</button>
-          <button class="lens-btn" data-lens="artist" type="button">Artist</button>
+          <button class="lens-btn" data-lens="both" type="button">Both</button>
+          <button class="lens-btn active" data-lens="artist" type="button">Artist</button>
           <button class="lens-btn" data-lens="brand" type="button">Brand</button>
         </div>
       </div>
@@ -531,8 +531,8 @@ def serve_interactive_graph():
       <div class="label">Layout</div>
       <div class="value">
         <select id="layoutMode">
-          <option value="preset" selected>Preset (server positions)</option>
-          <option value="cose">CoSE (force-directed)</option>
+          <option value="preset">Preset (server positions)</option>
+          <option value="cose" selected>CoSE (force-directed)</option>
           <option value="circle">Circle</option>
           <option value="concentric">Concentric</option>
           <option value="grid">Grid</option>
