@@ -1070,6 +1070,15 @@ function renderGraph(data){
       },
     },
     {
+      selector: "node.focus-center",
+      style: {
+        "width": 90,
+        "height": 90,
+        "border-width": 4,
+        "font-size": 14,
+      },
+    },
+    {
       selector: "edge",
       style: {
         "curve-style": "unbundled-bezier",
@@ -1351,6 +1360,7 @@ refreshAll().then(() => {
       if (artistNode.length > 0) {
         const keep = artistNode.closedNeighborhood();
         cy.elements().not(keep).remove();
+        artistNode.addClass('focus-center');
       }
 
       const l = cy.layout(getLayoutOpts());
