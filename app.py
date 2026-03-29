@@ -981,12 +981,41 @@ function afterGroupsLayout() {
 }
 
 // ── 3D Perspective + rotation ────────────────────────────────────────────────
-// _3d_base: node_id → {x0, y0, z0} centered, pre-rotation, normalized to ±400
-// _3d_screenCx/Cy: viewport center for re-adding after projection
+// _3d_base: node_id → {x0, y0, z0} centered, normalized to ±400
+// Two rotation angles: _3d_angle (Y-axis, horizontal) + _3d_tilt (X-axis, vertical)
 let _3d_base = {}, _3d_screenCx = 0, _3d_screenCy = 0;
-let _3d_angle = 0, _3d_raf = null, _3d_spinning = false;
-const FOCAL_3D = 2000;   // focal length; safe with positions ≤400 and z range 200-1100
-const ROT_SPEED = 0.007; // ~0.4°/frame @ 60fps ≈ one full spin ~15s
+let _3d_angle = 0, _3d_tilt = 0;
+let _3d_raf = null, _3d_spinning = false;
+let _3d_drag = null; // { x, y, startAngle, startTilt, wasSpinning }
+const FOCAL_3D = 2000;
+const ROT_SPEED = 0.007;
+
+// Core render: apply Ry(_3d_angle) then Rx(_3d_tilt), project, update styles.
+function _3d_render_frame() {
+  if (!cy || !Object.keys(_3d_base).length) return;
+  const cosA = Math.cos(_3d_angle), sinA = Math.sin(_3d_angle);
+  const cosT = Math.cos(_3d_tilt),  sinT = Math.sin(_3d_tilt);
+  cy.batch(() => {
+    cy.nodes(':visible').filter(n => n.data('type') !== 'registered_domain').forEach(n => {
+      const b = _3d_base[n.id()];
+      if (!b) return;
+      // Ry(angle): rotate around Y
+      const xr  = b.x0 * cosA + b.z0 * sinA;
+      const zry = -b.x0 * sinA + b.z0 * cosA;
+      // Rx(tilt): rotate around X
+      const yr  = b.y0 * cosT - zry * sinT;
+      const zr  = b.y0 * sinT + zry * cosT;
+      const s   = FOCAL_3D / (FOCAL_3D + zr);
+      n.position({ x: _3d_screenCx + xr * s, y: _3d_screenCy + yr * s });
+      n.style({
+        'width':     Math.max(5, (n.data('size')      || 34) * s),
+        'height':    Math.max(5, (n.data('size')      || 34) * s),
+        'opacity':   Math.max(0.15, 0.3 + s * 0.7),
+        'font-size': Math.max(5, (n.data('font_size') || 10) * s),
+      });
+    });
+  });
+}
 
 function stop3DRotation() {
   if (_3d_raf) { cancelAnimationFrame(_3d_raf); _3d_raf = null; }
@@ -998,23 +1027,7 @@ function stop3DRotation() {
 function _apply3DFrame() {
   if (!cy || !_3d_spinning) return;
   _3d_angle += ROT_SPEED;
-  const cosA = Math.cos(_3d_angle), sinA = Math.sin(_3d_angle);
-  cy.batch(() => {
-    cy.nodes(':visible').filter(n => n.data('type') !== 'registered_domain').forEach(n => {
-      const b = _3d_base[n.id()];
-      if (!b) return;
-      const xr = b.x0 * cosA + b.z0 * sinA;  // Y-axis rotation
-      const zr = -b.x0 * sinA + b.z0 * cosA;
-      const s  = FOCAL_3D / (FOCAL_3D + zr);
-      n.position({ x: _3d_screenCx + xr * s, y: _3d_screenCy + b.y0 * s });
-      n.style({
-        'width':     Math.max(5, (n.data('size')      || 34) * s),
-        'height':    Math.max(5, (n.data('size')      || 34) * s),
-        'opacity':   Math.max(0.15, 0.3 + s * 0.7),
-        'font-size': Math.max(5, (n.data('font_size') || 10) * s),
-      });
-    });
-  });
+  _3d_render_frame();
   _3d_raf = requestAnimationFrame(_apply3DFrame);
 }
 
@@ -1027,35 +1040,41 @@ function start3DRotation() {
   _3d_raf = requestAnimationFrame(_apply3DFrame);
 }
 
+function _3d_enable_interaction() {
+  if (!cy) return;
+  cy.userPanningEnabled(false);
+  cy.nodes().ungrabify();
+  const g = el('graph');
+  if (g) g.style.cursor = 'grab';
+}
+
+function _3d_disable_interaction() {
+  if (!cy) return;
+  cy.userPanningEnabled(true);
+  cy.nodes().grabify();
+  const g = el('graph');
+  if (g) g.style.cursor = '';
+}
+
 // 3D Perspective preset: run CoSE for base X/Y, assign Z by node type + degree,
-// normalize positions, store in _3d_base, then start rotation loop.
+// normalize, store _3d_base, then start rotation and enable drag interaction.
 function run3DLayout() {
   if (!cy) return;
   stop3DRotation();
   _3d_base = {};
   const baseLayout = cy.layout({
-    name: 'cose',
-    animate: false,
-    fit: false,
-    padding: 40,
-    ..._coseRepulsionOpts(),
-    nestingFactor: 1.2,
-    componentSpacing: 80,
+    name: 'cose', animate: false, fit: false, padding: 40,
+    ..._coseRepulsionOpts(), nestingFactor: 1.2, componentSpacing: 80,
   });
   baseLayout.one('layoutstop', () => {
     const Z_BASE = { artist: 200, brand: 500, domain: 800, registered_domain: 1100 };
     let maxDeg = 1;
     cy.nodes().forEach(n => { if ((n.data('degree') || 0) > maxDeg) maxDeg = n.data('degree'); });
-
     const visible = cy.nodes(':visible').filter(n => n.data('type') !== 'registered_domain');
-
-    // Centroid
     let sumX = 0, sumY = 0;
     visible.forEach(n => { sumX += n.position().x; sumY += n.position().y; });
     const cx = visible.length ? sumX / visible.length : 0;
     const cy_c = visible.length ? sumY / visible.length : 0;
-
-    // Max extent — normalize so positions fit in ±400 (keeps FOCAL_3D safe)
     let maxR = 1;
     visible.forEach(n => {
       const dx = n.position().x - cx, dy = n.position().y - cy_c;
@@ -1063,47 +1082,66 @@ function run3DLayout() {
       if (r > maxR) maxR = r;
     });
     const norm = Math.min(1, 400 / maxR);
-
-    // Store base 3D coords and apply initial (θ=0) perspective
     visible.forEach(n => {
       const degN = (n.data('degree') || 0) / maxDeg;
       const z0 = Math.max(50, (Z_BASE[n.data('type')] ?? 800) - degN * 200);
-      const x0 = (n.position().x - cx) * norm;
-      const y0 = (n.position().y - cy_c) * norm;
-      _3d_base[n.id()] = { x0, y0, z0 };
+      _3d_base[n.id()] = {
+        x0: (n.position().x - cx) * norm,
+        y0: (n.position().y - cy_c) * norm,
+        z0,
+      };
     });
-
-    // Screen center: middle of viewport
     const vp = cy.extent();
     _3d_screenCx = (vp.x1 + vp.x2) / 2;
     _3d_screenCy = (vp.y1 + vp.y2) / 2;
-
-    // Apply initial frame (θ=0), then fit and start spinning
-    const cosA = Math.cos(_3d_angle), sinA = Math.sin(_3d_angle);
-    cy.batch(() => {
-      visible.forEach(n => {
-        const b = _3d_base[n.id()];
-        const xr = b.x0 * cosA + b.z0 * sinA;
-        const zr = -b.x0 * sinA + b.z0 * cosA;
-        const s  = FOCAL_3D / (FOCAL_3D + zr);
-        n.position({ x: _3d_screenCx + xr * s, y: _3d_screenCy + b.y0 * s });
-        n.style({
-          'width':     Math.max(5, (n.data('size')      || 34) * s),
-          'height':    Math.max(5, (n.data('size')      || 34) * s),
-          'opacity':   Math.max(0.15, 0.3 + s * 0.7),
-          'font-size': Math.max(5, (n.data('font_size') || 10) * s),
-        });
-      });
-    });
+    _3d_render_frame();
     cy.fit(undefined, 60);
-    // Update screen center post-fit so rotation stays centered
     const vp2 = cy.extent();
     _3d_screenCx = (vp2.x1 + vp2.x2) / 2;
     _3d_screenCy = (vp2.y1 + vp2.y2) / 2;
+    _3d_enable_interaction();
     start3DRotation();
   });
   baseLayout.run();
 }
+
+// ── Mouse-drag rotation ──────────────────────────────────────────────────────
+// Drag left/right → Y-axis (angle); drag up/down → X-axis (tilt).
+// Dragging pauses the RAF loop; releasing resumes it if it was spinning.
+(function() {
+  const SENS = 0.007; // radians per pixel
+  const graphDiv = el('graph');
+  if (!graphDiv) return;
+
+  graphDiv.addEventListener('mousedown', (e) => {
+    if (!Object.keys(_3d_base).length) return;
+    e.preventDefault();
+    const wasSpinning = _3d_spinning;
+    if (_3d_raf) { cancelAnimationFrame(_3d_raf); _3d_raf = null; }
+    _3d_spinning = false;
+    _3d_drag = { x: e.clientX, y: e.clientY, startAngle: _3d_angle, startTilt: _3d_tilt, wasSpinning };
+    graphDiv.style.cursor = 'grabbing';
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (!_3d_drag) return;
+    const dx = e.clientX - _3d_drag.x;
+    const dy = e.clientY - _3d_drag.y;
+    _3d_angle = _3d_drag.startAngle + dx * SENS;
+    _3d_tilt  = Math.max(-Math.PI / 2, Math.min(Math.PI / 2,
+                  _3d_drag.startTilt + dy * SENS));
+    _3d_render_frame();
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (!_3d_drag) return;
+    const resume = _3d_drag.wasSpinning;
+    _3d_drag = null;
+    const g = el('graph');
+    if (g) g.style.cursor = Object.keys(_3d_base).length ? 'grab' : '';
+    if (resume) start3DRotation();
+  });
+})();
 
 // Groups preset: skip CoSE entirely for compound groups — manually place each in a grid,
 // children arranged in a circle. Free nodes (brands/artists/standalone domains) get their
@@ -1359,7 +1397,10 @@ function renderGraph(data){
 
   if (cy) {
     stop3DRotation();
-    if (currentPreset !== '3d') cy.nodes().removeStyle('width height opacity font-size');
+    if (currentPreset !== '3d') {
+      _3d_disable_interaction();
+      cy.nodes().removeStyle('width height opacity font-size');
+    }
     cy.batch(() => {
       cy.elements().remove();
       cy.add(elements);
@@ -1586,6 +1627,7 @@ function applyCurrentLayout() {
   if (rotateField) rotateField.style.display = preset === '3d' ? '' : 'none';
   if (preset !== '3d') {
     stop3DRotation();
+    _3d_disable_interaction();
     cy.nodes().removeStyle('width height opacity font-size');
   }
   if (preset === "groups") {
