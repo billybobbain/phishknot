@@ -155,6 +155,25 @@ def campaigns_page():
     <a href="/graph/interactive">Graph</a>
     <a href="/campaigns">Campaigns</a>
   </nav>
+  <div style="flex:1"></div>
+  <div style="display:flex;align-items:center;gap:6px">
+    <select id="timeRange" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer">
+      <option value="1h">Last 1h</option>
+      <option value="4h">Last 4h</option>
+      <option value="12h">Last 12h</option>
+      <option value="24h">Last 24h</option>
+      <option value="3d">Last 3d</option>
+      <option value="7d">Last 7d</option>
+      <option value="30d">Last 30d</option>
+      <option value="all" selected>All time</option>
+      <option value="custom">Custom…</option>
+    </select>
+    <span id="customRange" style="display:none;align-items:center;gap:4px;font-size:12px;color:#aab4de">
+      <input type="date" id="dateSince" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:12px;width:130px">
+      <span>–</span>
+      <input type="date" id="dateUntil" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:12px;width:130px">
+    </span>
+  </div>
 </header>
 <div class="page">
   <h1>Campaigns</h1>
@@ -174,6 +193,44 @@ def campaigns_page():
 </div>
 <script>
 let _campaigns = [];
+const TIME_HOURS_C = { "1h":1, "4h":4, "12h":12, "24h":24, "3d":72, "7d":168, "30d":720 };
+
+function getTimeParamsC() {
+  const preset = localStorage.getItem("pk_time") || "all";
+  if (preset === "all") return "";
+  if (preset === "custom") {
+    const s = localStorage.getItem("pk_since") || "";
+    const u = localStorage.getItem("pk_until") || "";
+    const p = new URLSearchParams();
+    if (s) p.set("since", s);
+    if (u) p.set("until", u);
+    return p.toString();
+  }
+  const h = TIME_HOURS_C[preset] || 0;
+  if (!h) return "";
+  const since = new Date(Date.now() - h * 3600 * 1000).toISOString().slice(0, 10);
+  return `since=${since}`;
+}
+
+function initTimePickerC() {
+  const sel = document.getElementById("timeRange");
+  const customEl = document.getElementById("customRange");
+  const sinceEl = document.getElementById("dateSince");
+  const untilEl = document.getElementById("dateUntil");
+  if (!sel) return;
+  const saved = localStorage.getItem("pk_time") || "all";
+  sel.value = saved;
+  if (saved === "custom" && customEl) customEl.style.display = "flex";
+  if (sinceEl) sinceEl.value = localStorage.getItem("pk_since") || "";
+  if (untilEl) untilEl.value = localStorage.getItem("pk_until") || "";
+  sel.addEventListener("change", () => {
+    localStorage.setItem("pk_time", sel.value);
+    if (customEl) customEl.style.display = sel.value === "custom" ? "flex" : "none";
+    if (sel.value !== "custom") load();
+  });
+  if (sinceEl) sinceEl.addEventListener("change", () => { localStorage.setItem("pk_since", sinceEl.value); load(); });
+  if (untilEl) untilEl.addEventListener("change", () => { localStorage.setItem("pk_until", untilEl.value); load(); });
+}
 
 function sortAndRender() {
   const mode = document.getElementById("sortMode").value;
@@ -204,7 +261,8 @@ function sortAndRender() {
 }
 
 async function load() {
-  const resp = await fetch("/campaigns/data");
+  const tq = getTimeParamsC();
+  const resp = await fetch(`/campaigns/data${tq ? "?" + tq : ""}`);
   const data = await resp.json();
   _campaigns = data.campaigns || [];
   const subtitle = document.getElementById("subtitle");
@@ -213,6 +271,7 @@ async function load() {
   sortAndRender();
   document.getElementById("sortMode").addEventListener("change", sortAndRender);
 }
+initTimePickerC();
 load().catch(e => { document.getElementById("grid").innerHTML = `<div style='color:#ffb3b3'>Error: ${e.message}</div>`; });
 </script>
 </body>
@@ -223,6 +282,8 @@ load().catch(e => { document.getElementById("grid").innerHTML = `<div style='col
 def campaigns_data():
     """Return per-artist campaign summaries from the current graph."""
     co = (request.args.get("co", "1") or "1").lower() in ("1", "true", "yes")
+    since = (request.args.get("since") or "").strip()
+    until = (request.args.get("until") or "").strip()
     gexf_path = _pick_dataset_gexf(co)
     G = _load_graph_from_gexf(gexf_path)
     if G is None:
@@ -296,6 +357,17 @@ def campaigns_data():
                         c["last_seen"] = row[1][:10]
         except Exception:
             pass
+
+        # Date filter
+        if since or until:
+            def _in_range(c):
+                ls = c.get("last_seen") or ""
+                fs = c.get("first_seen") or ""
+                if since and ls and ls < since: return False
+                if until and fs and fs > until: return False
+                return True
+            campaigns = [c for c in campaigns if _in_range(c)]
+            brand_set = {b for c in campaigns for b in c["brands"]}
 
         campaigns.sort(key=lambda c: (c["last_seen"] or "0000-00-00", c["brand_count"], c["url_count"]), reverse=True)
         return jsonify({"campaigns": campaigns, "total_brands": len(brand_set)})
@@ -532,7 +604,23 @@ def serve_interactive_graph():
     <div id="statRun" class="pill">Run: —</div>
     <div id="status" class="pill" style="display:none">Loading…</div>
   </div>
-  <div class="right">
+  <div class="right" style="display:flex;align-items:center;gap:6px">
+    <select id="timeRange" class="btn" style="padding:5px 8px;font-size:12px;cursor:pointer" title="Time range filter">
+      <option value="1h">Last 1h</option>
+      <option value="4h">Last 4h</option>
+      <option value="12h">Last 12h</option>
+      <option value="24h">Last 24h</option>
+      <option value="3d">Last 3d</option>
+      <option value="7d">Last 7d</option>
+      <option value="30d">Last 30d</option>
+      <option value="all" selected>All time</option>
+      <option value="custom">Custom…</option>
+    </select>
+    <span id="customRange" style="display:none;align-items:center;gap:4px;font-size:12px;color:var(--muted)">
+      <input type="date" id="dateSince" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:12px;width:130px">
+      <span>–</span>
+      <input type="date" id="dateUntil" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:12px;width:130px">
+    </span>
     <button id="refreshBtn" class="btn" type="button">↺ Refresh</button>
     <button id="downloadPng" class="btn" type="button">⬇ PNG</button>
   </div>
@@ -678,6 +766,47 @@ function currentLens(){
   return active ? active.dataset.lens : "both";
 }
 
+// ── Time range picker (shared logic, persisted in localStorage) ──────────────
+const TIME_HOURS = { "1h":1, "4h":4, "12h":12, "24h":24, "3d":72, "7d":168, "30d":720 };
+
+function initTimePicker(onChangeFn) {
+  const sel = el("timeRange");
+  const customEl = el("customRange");
+  const sinceEl = el("dateSince");
+  const untilEl = el("dateUntil");
+  if (!sel) return;
+
+  // Restore from localStorage
+  const saved = localStorage.getItem("pk_time") || "all";
+  sel.value = saved;
+  if (saved === "custom") {
+    if (customEl) customEl.style.display = "flex";
+    if (sinceEl) sinceEl.value = localStorage.getItem("pk_since") || "";
+    if (untilEl) untilEl.value = localStorage.getItem("pk_until") || "";
+  }
+
+  sel.addEventListener("change", () => {
+    localStorage.setItem("pk_time", sel.value);
+    if (customEl) customEl.style.display = sel.value === "custom" ? "flex" : "none";
+    if (sel.value !== "custom") onChangeFn();
+  });
+  if (sinceEl) sinceEl.addEventListener("change", () => { localStorage.setItem("pk_since", sinceEl.value); onChangeFn(); });
+  if (untilEl) untilEl.addEventListener("change", () => { localStorage.setItem("pk_until", untilEl.value); onChangeFn(); });
+}
+
+function getTimeParams() {
+  const preset = localStorage.getItem("pk_time") || "all";
+  if (preset === "all") return { since: "", until: "" };
+  if (preset === "custom") {
+    return { since: localStorage.getItem("pk_since") || "", until: localStorage.getItem("pk_until") || "" };
+  }
+  const h = TIME_HOURS[preset] || 0;
+  if (!h) return { since: "", until: "" };
+  const since = new Date(Date.now() - h * 3600 * 1000).toISOString().slice(0, 10);
+  return { since, until: "" };
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 function buildQuery(){
   const coEl = el("coToggle");
   const viewEl = el("viewMode");
@@ -688,7 +817,10 @@ function buildQuery(){
   const maxNodesRaw = maxNodesEl ? maxNodesEl.value : "200";
   const maxNodes = Math.max(10, parseInt(maxNodesRaw || "200", 10));
   const lens = currentLens();
+  const { since, until } = getTimeParams();
   const params = new URLSearchParams({ co, view, max_nodes: String(maxNodes), lens });
+  if (since) params.set("since", since);
+  if (until) params.set("until", until);
   return params.toString();
 }
 
@@ -1284,6 +1416,7 @@ if (panelToggle) panelToggle.addEventListener("click", () => {
 });
 const refreshBtn = el("refreshBtn");
 if (refreshBtn) refreshBtn.addEventListener("click", refreshAll);
+initTimePicker(refreshAll);
 const downloadPng = el("downloadPng");
 if (downloadPng) downloadPng.addEventListener("click", () => {
   if (!cy) return;
@@ -1589,6 +1722,8 @@ def graph_data():
     except Exception:
         max_nodes = 200
     max_nodes = max(10, min(max_nodes, 5000))
+    since = (request.args.get("since") or "").strip()
+    until = (request.args.get("until") or "").strip()
 
     gexf_path = _pick_dataset_gexf(co)
     G = _load_graph_from_gexf(gexf_path)
@@ -1671,8 +1806,50 @@ def graph_data():
                 node_entry["parent"] = parent_id
             nodes.append(node_entry)
 
+        node_ids = {n["id"] for n in nodes}
+
+        # Date filtering: look up first_seen/last_seen per node label from url_history
+        if since or until:
+            try:
+                import sqlite3 as _sq3
+                history_db = DATA_DIR / "url_history.db"
+                if history_db.is_file():
+                    with _sq3.connect(str(history_db)) as _conn:
+                        filtered_ids = set()
+                        for node in nodes:
+                            lbl = node["label"]
+                            ntype = node["type"]
+                            if ntype == "artist":
+                                row = _conn.execute(
+                                    "SELECT MIN(first_seen), MAX(last_seen) FROM url_history WHERE artists LIKE ?",
+                                    (f'%"{lbl}"%',)).fetchone()
+                            elif ntype == "brand":
+                                row = _conn.execute(
+                                    "SELECT MIN(first_seen), MAX(last_seen) FROM url_history WHERE brands LIKE ?",
+                                    (f'%"{lbl}"%',)).fetchone()
+                            elif ntype in ("domain", "registered_domain"):
+                                row = _conn.execute(
+                                    "SELECT MIN(first_seen), MAX(last_seen) FROM url_history WHERE domain LIKE ?",
+                                    (f"%{lbl}%",)).fetchone()
+                            else:
+                                row = None
+                            if row and row[0]:
+                                node_first, node_last = row[0][:10], row[1][:10]
+                                if since and node_last < since:
+                                    filtered_ids.add(node["id"])
+                                elif until and node_first > until:
+                                    filtered_ids.add(node["id"])
+                            elif since:  # no history — exclude when time filter is active
+                                filtered_ids.add(node["id"])
+                        nodes = [n for n in nodes if n["id"] not in filtered_ids]
+                        node_ids = {n["id"] for n in nodes}
+            except Exception:
+                pass
+
         edges = []
         for u, v, data in H.edges(data=True):
+            if str(u) not in node_ids or str(v) not in node_ids:
+                continue
             edges.append({
                 "source": str(u),
                 "target": str(v),
