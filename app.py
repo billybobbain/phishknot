@@ -488,6 +488,7 @@ def serve_interactive_graph():
   </div>
   <div class="right">
     <button id="refreshBtn" class="btn" type="button">↺ Refresh</button>
+    <button id="downloadPng" class="btn" type="button">⬇ PNG</button>
   </div>
 </header>
 <div class="layout">
@@ -1228,6 +1229,15 @@ if (panelToggle) panelToggle.addEventListener("click", () => {
 });
 const refreshBtn = el("refreshBtn");
 if (refreshBtn) refreshBtn.addEventListener("click", refreshAll);
+const downloadPng = el("downloadPng");
+if (downloadPng) downloadPng.addEventListener("click", () => {
+  if (!cy) return;
+  const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const a = document.createElement("a");
+  a.href = cy.png({ full: true, scale: 2, bg: "#0d1117" });
+  a.download = `phishknot_${ts}.png`;
+  a.click();
+});
 document.querySelectorAll(".lens-btn").forEach(btn => {
   btn.addEventListener("click", () => {
     document.querySelectorAll(".lens-btn").forEach(b => b.classList.remove("active"));
