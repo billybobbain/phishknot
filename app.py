@@ -777,6 +777,7 @@ def serve_interactive_graph():
       <div class="value" style="display:flex;gap:6px">
         <button class="btn" id="rerunLayout" style="flex:1">Re-run</button>
         <button class="btn" id="fitGraph" style="flex:1">Fit</button>
+        <button class="btn" id="toggleEdges" style="flex:1">Edges</button>
       </div>
     </div>
     <div class="field" id="rotateField" style="display:none">
@@ -2101,6 +2102,13 @@ const rerunLayout = el("rerunLayout");
 if (rerunLayout) rerunLayout.addEventListener("click", applyCurrentLayout);
 const fitGraph = el("fitGraph");
 if (fitGraph) fitGraph.addEventListener("click", () => { if (cy) cy.fit(undefined, 40); });
+const toggleEdges = el("toggleEdges");
+if (toggleEdges) toggleEdges.addEventListener("click", () => {
+  if (!cy) return;
+  const hidden = cy.edges().first().hidden();
+  if (hidden) { cy.edges().show(); toggleEdges.textContent = "Edges"; }
+  else        { cy.edges().hide(); toggleEdges.textContent = "Edges \u25a0"; }
+});
 const rotate3DBtn = el('rotate3DBtn');
 if (rotate3DBtn) rotate3DBtn.addEventListener('click', () => {
   if (_3d_spinning) stop3DRotation(); else start3DRotation();
