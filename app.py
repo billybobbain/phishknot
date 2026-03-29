@@ -568,7 +568,14 @@ def serve_interactive_graph():
   th, td { border-bottom: 1px solid rgba(255,255,255,0.08); padding: 6px 4px; vertical-align: top; }
   th { color: var(--muted); font-weight: 600; text-align: left; }
   .graph { width: 100%; min-height: calc(100vh - 48px); background: #0a0f1f; }
-  #graph { width: 100%; height: calc(100vh - 48px); }
+  #graphWrap { position: relative; overflow: hidden; height: calc(100vh - 48px); }
+  #graph { width: 100%; height: 100%; }
+  #timelineBar { display: none; position: absolute; bottom: 0; left: 0; right: 0; height: 56px;
+    background: rgba(10,15,31,0.94); border-top: 1px solid var(--border);
+    padding: 0 14px; align-items: center; gap: 10px; z-index: 20;
+    backdrop-filter: blur(6px); }
+  #tlSlider { flex: 1; accent-color: var(--accent); cursor: pointer; height: 4px; }
+  #tlDateLabel { font-size: 12px; color: var(--muted); white-space: nowrap; min-width: 86px; font-variant-numeric: tabular-nums; }
   .legend { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
   .chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.12); padding: 4px 8px; border-radius: 999px; font-size: 12px; color: var(--muted); }
   .match-card { border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; background: rgba(0,0,0,0.12); }
@@ -752,7 +759,22 @@ def serve_interactive_graph():
     </details>
     <div id="error" class="error" style="display:none"></div>
   </div>
-  <div id="graph" class="graph"></div>
+  <div id="graphWrap">
+    <div id="graph" class="graph"></div>
+    <div id="timelineBar">
+      <button class="btn" id="tlPlayBtn" style="min-width:34px;padding:5px 8px" title="Play/Pause">&#9654;</button>
+      <button class="btn" id="tlResetBtn" style="padding:5px 8px;font-size:13px" title="Reset to start">&#8635;</button>
+      <span id="tlDateLabel">—</span>
+      <input type="range" id="tlSlider" min="0" max="10000" value="0">
+      <span style="font-size:12px;color:var(--muted)">Speed</span>
+      <select id="tlSpeed" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:3px 6px;font-size:12px">
+        <option value="7">7 d/s</option>
+        <option value="30" selected>30 d/s</option>
+        <option value="90">90 d/s</option>
+        <option value="365">1 yr/s</option>
+      </select>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -1007,10 +1029,11 @@ function _3d_render_frame() {
       const zr  = b.y0 * sinT + zry * cosT;
       const s   = FOCAL_3D / (FOCAL_3D + zr);
       n.position({ x: _3d_screenCx + xr * s, y: _3d_screenCy + yr * s });
+      const tlHidden = n.hasClass('tl-hidden');
       n.style({
         'width':     Math.max(5, (n.data('size')      || 34) * s),
         'height':    Math.max(5, (n.data('size')      || 34) * s),
-        'opacity':   Math.max(0.15, 0.3 + s * 0.7),
+        'opacity':   tlHidden ? 0 : Math.max(0.15, 0.3 + s * 0.7),
         'font-size': Math.max(5, (n.data('font_size') || 10) * s),
       });
     });
@@ -1381,6 +1404,14 @@ function renderGraph(data){
       },
     },
     {
+      selector: "node.tl-hidden",
+      style: { "opacity": 0 },
+    },
+    {
+      selector: "edge.tl-hidden",
+      style: { "opacity": 0 },
+    },
+    {
       selector: "edge",
       style: {
         "curve-style": "unbundled-bezier",
@@ -1561,6 +1592,126 @@ function handleChipClick(nodeId, colorClass, chip) {
   if (n && (n.type === "brand" || n.type === "artist")) filterMatches(n.label, n.type);
 }
 
+// ── Time animation ───────────────────────────────────────────────────────────
+// Cumulative: nodes appear when playhead passes their first_seen date.
+// Works in any layout preset including 3D (opacity handled by _3d_render_frame).
+let _tl_times = {};          // node_id → first_seen epoch ms (null = always visible)
+let _tl_playhead = 0;        // current playhead epoch ms
+let _tl_range  = { min: 0, max: 0 };
+let _tl_playing = false;
+let _tl_raf_id  = null;
+let _tl_last_wall = 0;       // wall-clock ms of last RAF call
+
+function _tl_fmt_date(ms) {
+  if (!ms) return "—";
+  const d = new Date(ms);
+  return d.getFullYear() + "-" +
+    String(d.getMonth()+1).padStart(2,"0") + "-" +
+    String(d.getDate()).padStart(2,"0");
+}
+
+function _tl_apply_playhead() {
+  if (!cy) return;
+  const ph = _tl_playhead;
+  cy.batch(() => {
+    cy.nodes().forEach(n => {
+      const fs = _tl_times[n.id()];
+      if (fs == null) return; // no timestamp → always visible
+      if (fs <= ph) n.removeClass('tl-hidden');
+      else          n.addClass('tl-hidden');
+    });
+    cy.edges().forEach(e => {
+      if (e.source().hasClass('tl-hidden') || e.target().hasClass('tl-hidden'))
+        e.addClass('tl-hidden');
+      else
+        e.removeClass('tl-hidden');
+    });
+  });
+  // In 3D mode, re-render to apply combined depth + tl-hidden opacity
+  const preset = (el('layoutPreset') || {}).value;
+  if (preset === '3d' && Object.keys(_3d_base).length) _3d_render_frame();
+
+  // Update slider + date label
+  const range = _tl_range.max - _tl_range.min;
+  const sliderVal = range > 0 ? Math.round((ph - _tl_range.min) / range * 10000) : 0;
+  const slider = el('tlSlider');
+  if (slider) slider.value = sliderVal;
+  const lbl = el('tlDateLabel');
+  if (lbl) lbl.textContent = _tl_fmt_date(ph);
+}
+
+function _tl_frame(wallNow) {
+  if (!_tl_playing) return;
+  const dt = _tl_last_wall ? (wallNow - _tl_last_wall) : 0;
+  _tl_last_wall = wallNow;
+  const speedDays = parseFloat((el('tlSpeed') || {}).value || 30);
+  _tl_playhead = Math.min(_tl_range.max, _tl_playhead + dt * speedDays * 86400);
+  _tl_apply_playhead();
+  if (_tl_playhead >= _tl_range.max) {
+    _tl_playing = false;
+    const btn = el('tlPlayBtn');
+    if (btn) btn.innerHTML = '&#9654;';
+    return;
+  }
+  _tl_raf_id = requestAnimationFrame(_tl_frame);
+}
+
+function tlPlay() {
+  if (_tl_range.max <= _tl_range.min) return;
+  if (_tl_playhead >= _tl_range.max) _tl_playhead = _tl_range.min; // restart if at end
+  _tl_playing = true;
+  _tl_last_wall = 0;
+  const btn = el('tlPlayBtn');
+  if (btn) btn.innerHTML = '&#9646;&#9646;';
+  _tl_raf_id = requestAnimationFrame(_tl_frame);
+}
+
+function tlPause() {
+  _tl_playing = false;
+  if (_tl_raf_id) { cancelAnimationFrame(_tl_raf_id); _tl_raf_id = null; }
+  const btn = el('tlPlayBtn');
+  if (btn) btn.innerHTML = '&#9654;';
+}
+
+function initTimeline(nodes) {
+  tlPause();
+  _tl_times = {};
+  let minMs = Infinity, maxMs = -Infinity;
+  (nodes || []).forEach(n => {
+    const fs = n.first_seen ? Date.parse(n.first_seen) : null;
+    if (fs && !isNaN(fs)) {
+      _tl_times[n.id] = fs;
+      if (fs < minMs) minMs = fs;
+      if (fs > maxMs) maxMs = fs;
+    }
+  });
+  const bar = el('timelineBar');
+  if (!bar) return;
+  if (minMs === Infinity) { bar.style.display = 'none'; return; }
+  _tl_range = { min: minMs, max: maxMs };
+  _tl_playhead = minMs;
+  _tl_apply_playhead();   // show only nodes visible at start
+  bar.style.display = 'flex';
+}
+
+(function() {
+  const playBtn  = el('tlPlayBtn');
+  const resetBtn = el('tlResetBtn');
+  const slider   = el('tlSlider');
+  if (playBtn)  playBtn.addEventListener('click',  () => { _tl_playing ? tlPause() : tlPlay(); });
+  if (resetBtn) resetBtn.addEventListener('click', () => {
+    tlPause();
+    _tl_playhead = _tl_range.min;
+    _tl_apply_playhead();
+  });
+  if (slider) slider.addEventListener('input', () => {
+    tlPause();
+    const frac = slider.value / 10000;
+    _tl_playhead = _tl_range.min + frac * (_tl_range.max - _tl_range.min);
+    _tl_apply_playhead();
+  });
+})();
+
 async function refreshAll(){
   try {
     setError("");
@@ -1575,8 +1726,9 @@ async function refreshAll(){
     renderMeta(meta);
     renderMatches(matches);
     renderGraph(data);
+    initTimeline(data.nodes || []);
     _activeChipId = null;
-    if (cy) cy.elements().style("opacity", 1);
+    if (cy && !Object.keys(_tl_times).length) cy.elements().style("opacity", 1);
     buildNodeChips(data.nodes || []);
     const statusEl2 = el("status"); if (statusEl2) statusEl2.style.display = "none";
   } catch (e) {
@@ -2001,39 +2153,41 @@ def graph_data():
 
         node_ids = {n["id"] for n in nodes}
 
-        # Date filtering: look up first_seen/last_seen per node label from url_history
-        if since or until:
+        # Always attach first_seen/last_seen per node from url_history (used by client animation
+        # and date filtering). Single DB connection, one query per node.
+        history_db = DATA_DIR / "url_history.db"
+        if history_db.is_file():
             try:
                 import sqlite3 as _sq3
-                history_db = DATA_DIR / "url_history.db"
-                if history_db.is_file():
-                    with _sq3.connect(str(history_db)) as _conn:
-                        filtered_ids = set()
-                        for node in nodes:
-                            lbl = node["label"]
-                            ntype = node["type"]
-                            if ntype == "artist":
-                                row = _conn.execute(
-                                    "SELECT MIN(first_seen), MAX(last_seen) FROM url_history WHERE artists LIKE ?",
-                                    (f'%"{lbl}"%',)).fetchone()
-                            elif ntype == "brand":
-                                row = _conn.execute(
-                                    "SELECT MIN(first_seen), MAX(last_seen) FROM url_history WHERE brands LIKE ?",
-                                    (f'%"{lbl}"%',)).fetchone()
-                            elif ntype in ("domain", "registered_domain"):
-                                row = _conn.execute(
-                                    "SELECT MIN(first_seen), MAX(last_seen) FROM url_history WHERE domain LIKE ?",
-                                    (f"%{lbl}%",)).fetchone()
-                            else:
-                                row = None
-                            if row and row[0]:
-                                node_first, node_last = row[0][:10], row[1][:10]
-                                if since and node_last < since:
-                                    filtered_ids.add(node["id"])
-                                elif until and node_first > until:
-                                    filtered_ids.add(node["id"])
-                            elif since:  # no history — exclude when time filter is active
+                with _sq3.connect(str(history_db)) as _conn:
+                    filtered_ids = set()
+                    for node in nodes:
+                        lbl = node["label"]
+                        ntype = node["type"]
+                        if ntype == "artist":
+                            row = _conn.execute(
+                                "SELECT MIN(first_seen), MAX(last_seen) FROM url_history WHERE artists LIKE ?",
+                                (f'%"{lbl}"%',)).fetchone()
+                        elif ntype == "brand":
+                            row = _conn.execute(
+                                "SELECT MIN(first_seen), MAX(last_seen) FROM url_history WHERE brands LIKE ?",
+                                (f'%"{lbl}"%',)).fetchone()
+                        elif ntype in ("domain", "registered_domain"):
+                            row = _conn.execute(
+                                "SELECT MIN(first_seen), MAX(last_seen) FROM url_history WHERE domain LIKE ?",
+                                (f"%{lbl}%",)).fetchone()
+                        else:
+                            row = None
+                        if row and row[0]:
+                            node["first_seen"] = row[0][:10]
+                            node["last_seen"]  = row[1][:10]
+                            if since and node["last_seen"] < since:
                                 filtered_ids.add(node["id"])
+                            elif until and node["first_seen"] > until:
+                                filtered_ids.add(node["id"])
+                        elif since:
+                            filtered_ids.add(node["id"])
+                    if since or until:
                         nodes = [n for n in nodes if n["id"] not in filtered_ids]
                         node_ids = {n["id"] for n in nodes}
             except Exception:
