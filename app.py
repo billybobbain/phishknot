@@ -772,7 +772,11 @@ function getLayoutOpts(){
     const edgeLen = parseInt(el("coseEdgeLen")?.value || "220", 10);
     const gravity = parseInt(el("coseGravity")?.value || "10", 10) / 100;
     const iters = parseInt(el("coseIter")?.value || "1000", 10);
-    return { ...base, name: "cose", nodeRepulsion: repulsion, idealEdgeLength: edgeLen, edgeElasticity: 0.35, gravity, numIter: iters };
+    // nestingFactor: compound node repulsion multiplier — high value pushes groups far apart
+    // nodeOverlap: negative = penalty for overlapping (squeeze children inside)
+    return { ...base, name: "cose", nodeRepulsion: repulsion, idealEdgeLength: edgeLen,
+             edgeElasticity: 0.35, gravity, numIter: iters,
+             nestingFactor: 4.0, nodeOverlap: 4, componentSpacing: 120 };
   }
   if (name === "concentric") {
     return { ...base, name: "concentric", concentric: (node) => node.degree(), levelWidth: () => 1 };
