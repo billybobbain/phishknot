@@ -2115,7 +2115,8 @@ let _labelsHidden = false;
 if (toggleLabels) toggleLabels.addEventListener("click", () => {
   if (!cy) return;
   _labelsHidden = !_labelsHidden;
-  cy.nodes().style('label', _labelsHidden ? '' : 'data(label)');
+  if (_labelsHidden) cy.nodes().style('label', '');
+  else cy.nodes().removeStyle('label');
   toggleLabels.textContent = _labelsHidden ? "Labels \u25a0" : "Labels";
 });
 const rotate3DBtn = el('rotate3DBtn');
