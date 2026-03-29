@@ -530,15 +530,20 @@ def serve_interactive_graph():
     <div class="field">
       <div class="label">Layout</div>
       <div class="value">
-        <select id="layoutMode">
-          <option value="preset">Preset (server positions)</option>
-          <option value="cose" selected>CoSE (force-directed)</option>
+        <select id="layoutPreset">
+          <option value="groups" selected>Groups (domain clusters)</option>
+          <option value="campaign">Campaign (concentric)</option>
+          <option value="network">Network (force-directed)</option>
           <option value="circle">Circle</option>
-          <option value="concentric">Concentric</option>
           <option value="grid">Grid</option>
-          <option value="breadthfirst">Breadthfirst</option>
-          <option value="random">Random</option>
         </select>
+      </div>
+    </div>
+    <div class="field">
+      <div class="label"> </div>
+      <div class="value" style="display:flex;gap:6px">
+        <button class="btn" id="rerunLayout" style="flex:1">Re-run</button>
+        <button class="btn" id="fitGraph" style="flex:1">Fit</button>
       </div>
     </div>
     <div class="field">
@@ -563,7 +568,6 @@ def serve_interactive_graph():
         <div class="field"><div class="label" style="font-size:12px">Iterations</div>
           <div class="value"><input id="coseIter" type="range" min="100" max="3000" step="100" value="1000" style="width:100%">
           <span id="coseIterVal" style="font-size:11px;color:var(--muted)">1000</span></div></div>
-        <button class="btn" id="rerunLayout" style="width:100%;margin-top:6px">Re-run layout</button>
       </div>
     </details>
 
@@ -596,14 +600,6 @@ def serve_interactive_graph():
       <div class="content">
         <div id="runSummary">Loading…</div>
       </div>
-    </details>
-    <details>
-      <summary>Effective config</summary>
-      <div class="content"><pre id="configPre"></pre></div>
-    </details>
-    <details>
-      <summary>Keywords (counts + hashes)</summary>
-      <div class="content"><pre id="keywordsPre"></pre></div>
     </details>
     <details>
       <summary>Matches</summary>
@@ -677,8 +673,6 @@ function renderMeta(meta){
     <div><b>Mode</b>: NO_DOWNLOAD=${fmtBool(meta.config?.NO_DOWNLOAD)}, CO_OCCURRENCE_ONLY(env)=${fmtBool(meta.config?.CO_OCCURRENCE_ONLY)}</div>
     <div><b>Artist images</b>: spotify=${img.spotify_artist_images ?? "?"} / artists=${img.artists_total ?? "?"} (fallback avatars for the rest)</div>
   `;
-  el("configPre").textContent = JSON.stringify(meta.config || {}, null, 2);
-  el("keywordsPre").textContent = JSON.stringify(meta.keywords || {}, null, 2);
 }
 
 function _buildMatchCards(rows) {
@@ -760,31 +754,56 @@ function layoutCompoundChildren() {
   });
 }
 
+function _coseRepulsionOpts() {
+  return {
+    nodeRepulsion: parseInt(el("coseRepulsion")?.value || "55000", 10),
+    idealEdgeLength: parseInt(el("coseEdgeLen")?.value || "220", 10),
+    gravity: parseInt(el("coseGravity")?.value || "10", 10) / 100,
+    numIter: parseInt(el("coseIter")?.value || "1000", 10),
+    edgeElasticity: 0.35,
+    nodeOverlap: 4,
+  };
+}
+
 function getLayoutOpts(){
-  const layoutEl = el("layoutMode");
-  const name = (layoutEl && layoutEl.value) ? layoutEl.value : "preset";
-  const base = { animate: false, fit: true, padding: 40 };
-  if (name === "preset") {
-    return { ...base, name: "preset", positions: (node) => _serverPos[node.id()] };
+  const presetEl = el("layoutPreset");
+  const preset = (presetEl && presetEl.value) ? presetEl.value : "groups";
+
+  if (preset === "groups") {
+    // CoSE with aggressive compound group separation; fit:false so physics can spread freely.
+    let maxGroupRadius = 100;
+    if (cy) {
+      cy.nodes('[type="registered_domain"]').forEach(p => {
+        const n = p.children().filter(':visible').length;
+        const r = Math.max(40, n * 22) + 60;
+        if (r > maxGroupRadius) maxGroupRadius = r;
+      });
+    }
+    return { animate: false, fit: false, padding: 40, name: "cose",
+             ..._coseRepulsionOpts(),
+             nestingFactor: 20,
+             componentSpacing: Math.max(200, maxGroupRadius * 2),
+             minNodeSpacing: 20 };
   }
-  if (name === "cose") {
-    const repulsion = parseInt(el("coseRepulsion")?.value || "55000", 10);
-    const edgeLen = parseInt(el("coseEdgeLen")?.value || "220", 10);
-    const gravity = parseInt(el("coseGravity")?.value || "10", 10) / 100;
-    const iters = parseInt(el("coseIter")?.value || "1000", 10);
-    // nestingFactor: compound node repulsion multiplier — high value pushes groups far apart
-    // nodeOverlap: negative = penalty for overlapping (squeeze children inside)
-    return { ...base, name: "cose", nodeRepulsion: repulsion, idealEdgeLength: edgeLen,
-             edgeElasticity: 0.35, gravity, numIter: iters,
-             nestingFactor: 4.0, nodeOverlap: 4, componentSpacing: 120 };
+  if (preset === "campaign") {
+    // Concentric centered on selected node; fit:true ensures artist is visible on arrival.
+    return { animate: false, fit: true, padding: 60, name: "concentric",
+             concentric: (node) => node.degree(), levelWidth: () => 1 };
   }
-  if (name === "concentric") {
-    return { ...base, name: "concentric", concentric: (node) => node.degree(), levelWidth: () => 1 };
+  if (preset === "network") {
+    // Standard force-directed, fits to viewport.
+    return { animate: false, fit: true, padding: 40, name: "cose",
+             ..._coseRepulsionOpts(),
+             nestingFactor: 1.2, componentSpacing: 80 };
   }
-  if (name === "breadthfirst") {
-    return { ...base, name: "breadthfirst", directed: false, spacingFactor: 1.2 };
+  if (preset === "circle") {
+    return { animate: false, fit: true, padding: 40, name: "circle" };
   }
-  return { ...base, name };
+  if (preset === "grid") {
+    return { animate: false, fit: true, padding: 40, name: "grid" };
+  }
+  return { animate: false, fit: true, padding: 40, name: "concentric",
+           concentric: (node) => node.degree(), levelWidth: () => 1 };
 }
 
 function renderGraph(data){
@@ -1115,8 +1134,8 @@ const viewMode = el("viewMode");
 if (viewMode) viewMode.addEventListener("change", refreshAll);
 const maxNodesEl = el("maxNodes");
 if (maxNodesEl) maxNodesEl.addEventListener("change", refreshAll);
-const layoutMode = el("layoutMode");
-if (layoutMode) layoutMode.addEventListener("change", () => {
+const layoutPresetEl = el("layoutPreset");
+if (layoutPresetEl) layoutPresetEl.addEventListener("change", () => {
   if (cy && cy.elements().length > 0) cy.layout(getLayoutOpts()).run();
 });
 const searchBox = el("searchBox");
@@ -1136,13 +1155,16 @@ const rerunLayout = el("rerunLayout");
 if (rerunLayout) rerunLayout.addEventListener("click", () => {
   if (cy && cy.elements().length > 0) cy.layout(getLayoutOpts()).run();
 });
+const fitGraph = el("fitGraph");
+if (fitGraph) fitGraph.addEventListener("click", () => { if (cy) cy.fit(undefined, 40); });
+
 
 refreshAll().then(() => {
   const params = new URLSearchParams(window.location.search);
   const focusArtist = params.get("focus_artist");
   if (focusArtist) {
-    const layoutSel = document.getElementById("layoutMode");
-    if (layoutSel) layoutSel.value = "concentric";
+    const layoutSel = document.getElementById("layoutPreset");
+    if (layoutSel) layoutSel.value = "campaign";
     const chip = [...document.querySelectorAll(".node-chip")].find(
       c => c.textContent.trim().toLowerCase() === focusArtist.toLowerCase()
     );
