@@ -1613,23 +1613,32 @@ function _tl_fmt_date(ms) {
 function _tl_apply_playhead() {
   if (!cy) return;
   const ph = _tl_playhead;
+  const is3d = ((el('layoutPreset') || {}).value === '3d') && Object.keys(_3d_base).length;
   cy.batch(() => {
     cy.nodes().forEach(n => {
       const fs = _tl_times[n.id()];
-      if (fs == null) return; // no timestamp → always visible
-      if (fs <= ph) n.removeClass('tl-hidden');
-      else          n.addClass('tl-hidden');
+      const hide = fs != null && fs > ph;
+      if (hide) {
+        n.addClass('tl-hidden');
+        n.style('opacity', 0);        // inline beats any class or chip-click leftover
+      } else {
+        n.removeClass('tl-hidden');
+        if (!is3d) n.removeStyle('opacity'); // let layout / CSS handle non-3D opacity
+      }
     });
     cy.edges().forEach(e => {
-      if (e.source().hasClass('tl-hidden') || e.target().hasClass('tl-hidden'))
+      const hide = e.source().hasClass('tl-hidden') || e.target().hasClass('tl-hidden');
+      if (hide) {
         e.addClass('tl-hidden');
-      else
+        e.style('opacity', 0);        // must be inline — chip-click may have set inline opacity:1
+      } else {
         e.removeClass('tl-hidden');
+        e.removeStyle('opacity');     // clear any stale inline opacity so CSS takes over
+      }
     });
   });
-  // In 3D mode, re-render to apply combined depth + tl-hidden opacity
-  const preset = (el('layoutPreset') || {}).value;
-  if (preset === '3d' && Object.keys(_3d_base).length) _3d_render_frame();
+  // In 3D mode let _3d_render_frame set depth-aware opacity for visible nodes
+  if (is3d) _3d_render_frame();
 
   // Update slider + date label
   const range = _tl_range.max - _tl_range.min;
@@ -1689,8 +1698,8 @@ function initTimeline(nodes) {
   if (!bar) return;
   if (minMs === Infinity) { bar.style.display = 'none'; return; }
   _tl_range = { min: minMs, max: maxMs };
-  _tl_playhead = minMs;
-  _tl_apply_playhead();   // show only nodes visible at start
+  _tl_playhead = maxMs;   // start with all nodes visible; Play resets to min
+  _tl_apply_playhead();   // sets slider position + clears any stale tl-hidden classes
   bar.style.display = 'flex';
 }
 
@@ -1781,6 +1790,8 @@ function applyCurrentLayout() {
     stop3DRotation();
     _3d_disable_interaction();
     cy.nodes().removeStyle('width height opacity font-size');
+    cy.edges().removeStyle('opacity');
+    _tl_apply_playhead(); // re-sync tl-hidden inline opacity after clearing 3D styles
   }
   if (preset === "groups") {
     runGroupsLayout();
