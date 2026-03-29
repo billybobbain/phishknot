@@ -297,7 +297,7 @@ def campaigns_data():
         except Exception:
             pass
 
-        campaigns.sort(key=lambda c: (-(c["last_seen"] or ""), -c["brand_count"], -c["url_count"]))
+        campaigns.sort(key=lambda c: (c["last_seen"] or "0000-00-00", c["brand_count"], c["url_count"]), reverse=True)
         return jsonify({"campaigns": campaigns, "total_brands": len(brand_set)})
     except Exception as e:
         return jsonify({"campaigns": [], "error": str(e)})
