@@ -772,13 +772,10 @@ def serve_interactive_graph():
         </select>
       </div>
     </div>
-    <div class="field">
-      <div class="label"> </div>
-      <div class="value" style="display:flex;gap:6px">
-        <button class="btn" id="rerunLayout" style="flex:1">Re-run</button>
-        <button class="btn" id="fitGraph" style="flex:1">Fit</button>
-        <button class="btn" id="toggleEdges" style="flex:1">Edges</button>
-      </div>
+    <div class="field" style="grid-column:1/-1;display:flex;gap:6px">
+      <button class="btn" id="rerunLayout" style="flex:1">Re-run</button>
+      <button class="btn" id="fitGraph" style="flex:1">Fit</button>
+      <button class="btn" id="toggleEdges" style="flex:1">Edges</button>
     </div>
     <div class="field" id="rotateField" style="display:none">
       <div class="label"> </div>
