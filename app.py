@@ -776,6 +776,7 @@ def serve_interactive_graph():
       <button class="btn" id="rerunLayout" style="flex:1">Re-run</button>
       <button class="btn" id="fitGraph" style="flex:1">Fit</button>
       <button class="btn" id="toggleEdges" style="flex:1">Edges</button>
+      <button class="btn" id="toggleLabels" style="flex:1">Labels</button>
     </div>
     <div class="field" id="rotateField" style="display:none">
       <div class="label"> </div>
@@ -1128,10 +1129,10 @@ function afterGroupsLayout() {
 // Two rotation angles: _3d_angle (Y-axis, horizontal) + _3d_tilt (X-axis, vertical)
 let _3d_base = {}, _3d_screenCx = 0, _3d_screenCy = 0;
 let _3d_angle = 0, _3d_tilt = 0;
-let _3d_raf = null, _3d_spinning = false;
+let _3d_raf = null, _3d_spinning = false, _3d_last_ts = 0;
 let _3d_drag = null; // { x, y, startAngle, startTilt, wasSpinning }
 const FOCAL_3D = 2000;
-const ROT_SPEED = 0.007;
+const ROT_SPEED = 0.007; // radians per 16ms (≈60fps baseline)
 
 // Core render: apply Ry(_3d_angle) then Rx(_3d_tilt), project, update styles.
 function _3d_render_frame() {
@@ -1168,9 +1169,11 @@ function stop3DRotation() {
   if (btn) btn.innerHTML = '&#9654; Rotate';
 }
 
-function _apply3DFrame() {
+function _apply3DFrame(ts) {
   if (!cy || !_3d_spinning) return;
-  _3d_angle += ROT_SPEED;
+  const dt = (_3d_last_ts && ts > _3d_last_ts) ? Math.min(ts - _3d_last_ts, 50) : 16;
+  _3d_last_ts = ts;
+  _3d_angle += ROT_SPEED * (dt / 16);
   _3d_render_frame();
   _3d_raf = requestAnimationFrame(_apply3DFrame);
 }
@@ -1179,6 +1182,7 @@ function start3DRotation() {
   stop3DRotation();
   if (!Object.keys(_3d_base).length) return;
   _3d_spinning = true;
+  _3d_last_ts = 0;
   const btn = el('rotate3DBtn');
   if (btn) btn.innerHTML = '&#9646;&#9646; Pause';
   _3d_raf = requestAnimationFrame(_apply3DFrame);
@@ -2105,6 +2109,14 @@ if (toggleEdges) toggleEdges.addEventListener("click", () => {
   const hidden = cy.edges().first().hidden();
   if (hidden) { cy.edges().show(); toggleEdges.textContent = "Edges"; }
   else        { cy.edges().hide(); toggleEdges.textContent = "Edges \u25a0"; }
+});
+const toggleLabels = el("toggleLabels");
+let _labelsHidden = false;
+if (toggleLabels) toggleLabels.addEventListener("click", () => {
+  if (!cy) return;
+  _labelsHidden = !_labelsHidden;
+  cy.nodes().style('label', _labelsHidden ? '' : 'data(label)');
+  toggleLabels.textContent = _labelsHidden ? "Labels \u25a0" : "Labels";
 });
 const rotate3DBtn = el('rotate3DBtn');
 if (rotate3DBtn) rotate3DBtn.addEventListener('click', () => {
