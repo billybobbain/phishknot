@@ -532,9 +532,9 @@ def serve_interactive_graph():
       <div class="label">Layout</div>
       <div class="value">
         <select id="layoutPreset">
-          <option value="groups" selected>Groups (domain clusters)</option>
+          <option value="groups">Groups (domain clusters)</option>
           <option value="campaign">Campaign (concentric)</option>
-          <option value="network">Network (force-directed)</option>
+          <option value="network" selected>Network (force-directed)</option>
           <option value="circle">Circle</option>
           <option value="grid">Grid</option>
         </select>
@@ -847,7 +847,7 @@ function runGroupsLayout() {
       boundingBox: { x1: gridW + PADDING, y1: 0,
                      w: Math.max(300, freeNodes.length * 25),
                      h: Math.max(300, gridH) },
-      nodeRepulsion: 45000, idealEdgeLength: 150, numIter: 500,
+      nodeRepulsion: 150000, idealEdgeLength: 300, numIter: 800,
     }).run();
   }
 }
@@ -865,7 +865,7 @@ function _coseRepulsionOpts() {
 
 function getLayoutOpts(){
   const presetEl = el("layoutPreset");
-  const preset = (presetEl && presetEl.value) ? presetEl.value : "groups";
+  const preset = (presetEl && presetEl.value) ? presetEl.value : "network";
 
   if (preset === "groups") {
     // CoSE with aggressive compound group separation; fit:false so physics can spread freely.
@@ -1254,7 +1254,7 @@ if (maxNodesEl) maxNodesEl.addEventListener("change", refreshAll);
 function applyCurrentLayout() {
   if (!cy || cy.elements().length === 0) return;
   const presetEl = el("layoutPreset");
-  const preset = (presetEl && presetEl.value) ? presetEl.value : "groups";
+  const preset = (presetEl && presetEl.value) ? presetEl.value : "network";
   if (preset === "groups") {
     runGroupsLayout();
   } else {
