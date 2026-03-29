@@ -669,6 +669,7 @@ def serve_interactive_graph():
           <option value="groups">Groups (domain clusters)</option>
           <option value="campaign">Campaign (concentric)</option>
           <option value="network" selected>Network (force-directed)</option>
+          <option value="3d">3D Perspective</option>
           <option value="circle">Circle</option>
           <option value="grid">Grid</option>
         </select>
@@ -973,6 +974,56 @@ function afterGroupsLayout() {
   separateCompoundGroups();
 }
 
+// 3D Perspective preset: run CoSE for base X/Y, then assign Z by node type + degree,
+// apply perspective projection from centroid, scale size/opacity as depth cues.
+function run3DLayout() {
+  if (!cy) return;
+  const baseLayout = cy.layout({
+    name: 'cose',
+    animate: false,
+    fit: false,
+    padding: 40,
+    ..._coseRepulsionOpts(),
+    nestingFactor: 1.2,
+    componentSpacing: 80,
+  });
+  baseLayout.one('layoutstop', () => {
+    const Z_BASE = { artist: 0, brand: 300, domain: 600, registered_domain: 900 };
+    const FOCAL = 1000;
+    let maxDeg = 1;
+    cy.nodes().forEach(n => { if ((n.data('degree') || 0) > maxDeg) maxDeg = n.data('degree'); });
+
+    // Centroid of visible nodes (excluding compound parents — their pos is derived from children)
+    let sumX = 0, sumY = 0, count = 0;
+    cy.nodes(':visible').filter(n => n.data('type') !== 'registered_domain').forEach(n => {
+      sumX += n.position().x; sumY += n.position().y; count++;
+    });
+    if (count === 0) { cy.fit(undefined, 40); return; }
+    const cx = sumX / count, cy_c = sumY / count;
+
+    cy.batch(() => {
+      cy.nodes(':visible').filter(n => n.data('type') !== 'registered_domain').forEach(n => {
+        const type = n.data('type') || 'domain';
+        const degN = (n.data('degree') || 0) / maxDeg;
+        const z = Math.max(0, (Z_BASE[type] ?? 600) - degN * 200);
+        const scale = FOCAL / (FOCAL + z);
+        const pos = n.position();
+        n.position({ x: cx + (pos.x - cx) * scale, y: cy_c + (pos.y - cy_c) * scale });
+        const baseSize    = n.data('size')      || 34;
+        const baseFontSz  = n.data('font_size') || 10;
+        n.style({
+          'width':     Math.max(6,  baseSize   * scale),
+          'height':    Math.max(6,  baseSize   * scale),
+          'opacity':   Math.max(0.2, 0.3 + scale * 0.7),
+          'font-size': Math.max(6,  baseFontSz * scale),
+        });
+      });
+    });
+    cy.fit(undefined, 40);
+  });
+  baseLayout.run();
+}
+
 // Groups preset: skip CoSE entirely for compound groups — manually place each in a grid,
 // children arranged in a circle. Free nodes (brands/artists/standalone domains) get their
 // own CoSE layout in the space to the right of the grid.
@@ -1226,12 +1277,15 @@ function renderGraph(data){
   const currentPreset = (presetEl && presetEl.value) ? presetEl.value : "groups";
 
   if (cy) {
+    if (currentPreset !== '3d') cy.nodes().removeStyle('width height opacity font-size');
     cy.batch(() => {
       cy.elements().remove();
       cy.add(elements);
     });
     if (currentPreset === "groups") {
       runGroupsLayout();
+    } else if (currentPreset === "3d") {
+      run3DLayout();
     } else {
       const l = cy.layout(getLayoutOpts());
       l.one('layoutstop', afterGroupsLayout);
@@ -1249,6 +1303,8 @@ function renderGraph(data){
   });
   if (currentPreset === "groups") {
     runGroupsLayout();
+  } else if (currentPreset === "3d") {
+    run3DLayout();
   } else {
     cy.one('layoutstop', afterGroupsLayout);
     cy.layout(getLayoutOpts()).run();
@@ -1443,8 +1499,12 @@ function applyCurrentLayout() {
   if (!cy || cy.elements().length === 0) return;
   const presetEl = el("layoutPreset");
   const preset = (presetEl && presetEl.value) ? presetEl.value : "network";
+  // Reset any inline 3D depth styles when switching to a non-3D layout
+  if (preset !== '3d') cy.nodes().removeStyle('width height opacity font-size');
   if (preset === "groups") {
     runGroupsLayout();
+  } else if (preset === "3d") {
+    run3DLayout();
   } else {
     const l = cy.layout(getLayoutOpts());
     l.one('layoutstop', afterGroupsLayout);
