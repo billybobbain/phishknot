@@ -794,6 +794,63 @@ function afterGroupsLayout() {
   separateCompoundGroups();
 }
 
+// Groups preset: skip CoSE entirely for compound groups — manually place each in a grid,
+// children arranged in a circle. Free nodes (brands/artists/standalone domains) get their
+// own CoSE layout in the space to the right of the grid.
+function runGroupsLayout() {
+  if (!cy) return;
+  const parents = cy.nodes('[type="registered_domain"]').filter(':visible');
+
+  if (parents.length === 0) {
+    cy.layout({ animate: false, fit: false, padding: 40, name: "cose",
+                ..._coseRepulsionOpts(), nestingFactor: 1.2, componentSpacing: 80 }).run();
+    return;
+  }
+
+  const PADDING = 80;
+  const groups = [];
+  parents.forEach(p => {
+    const children = p.children().filter(':visible');
+    if (children.length === 0) return;
+    const n = children.length;
+    const radius = Math.max(60, n * 20);
+    groups.push({ parent: p, children, n, radius });
+  });
+  groups.sort((a, b) => b.radius - a.radius);
+
+  const maxRadius = groups[0].radius;
+  const cellSize = maxRadius * 2 + PADDING;
+  const cols = Math.ceil(Math.sqrt(groups.length));
+  const rows = Math.ceil(groups.length / cols);
+
+  groups.forEach((g, i) => {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    const cx = col * cellSize + cellSize / 2;
+    const cy_y = row * cellSize + cellSize / 2;
+    g.children.forEach((child, j) => {
+      const angle = (2 * Math.PI * j / g.n) - Math.PI / 2;
+      child.position({ x: cx + g.radius * Math.cos(angle), y: cy_y + g.radius * Math.sin(angle) });
+    });
+  });
+
+  // Place free nodes (not inside any compound group) in a CoSE layout alongside the grid
+  const freeNodes = cy.nodes(':visible').filter(n =>
+    n.data('type') !== 'registered_domain' && !n.data('parent')
+  );
+  if (freeNodes.length > 0) {
+    const gridW = cols * cellSize;
+    const gridH = rows * cellSize;
+    freeNodes.layout({
+      name: 'cose', animate: false, fit: false, padding: 20,
+      boundingBox: { x1: gridW + PADDING, y1: 0,
+                     w: Math.max(300, freeNodes.length * 25),
+                     h: Math.max(300, gridH) },
+      nodeRepulsion: 45000, idealEdgeLength: 150, numIter: 500,
+    }).run();
+  }
+}
+
 function _coseRepulsionOpts() {
   return {
     nodeRepulsion: parseInt(el("coseRepulsion")?.value || "55000", 10),
@@ -977,16 +1034,21 @@ function renderGraph(data){
       },
     },
   ];
-  const layoutOpts = getLayoutOpts();
+  const presetEl = el("layoutPreset");
+  const currentPreset = (presetEl && presetEl.value) ? presetEl.value : "groups";
 
   if (cy) {
     cy.batch(() => {
       cy.elements().remove();
       cy.add(elements);
     });
-    const l = cy.layout(layoutOpts);
-    l.one('layoutstop', afterGroupsLayout);
-    l.run();
+    if (currentPreset === "groups") {
+      runGroupsLayout();
+    } else {
+      const l = cy.layout(getLayoutOpts());
+      l.one('layoutstop', afterGroupsLayout);
+      l.run();
+    }
     return;
   }
 
@@ -995,9 +1057,14 @@ function renderGraph(data){
     container: el("graph"),
     elements,
     style: cyStyle,
-    layout: layoutOpts,
+    layout: { name: "preset", positions: () => ({ x: 0, y: 0 }) },
   });
-  cy.one('layoutstop', afterGroupsLayout);
+  if (currentPreset === "groups") {
+    runGroupsLayout();
+  } else {
+    cy.one('layoutstop', afterGroupsLayout);
+    cy.layout(getLayoutOpts()).run();
+  }
 
   cy.on("tap", "node", (evt) => {
     const node = evt.target;
@@ -1174,10 +1241,20 @@ const viewMode = el("viewMode");
 if (viewMode) viewMode.addEventListener("change", refreshAll);
 const maxNodesEl = el("maxNodes");
 if (maxNodesEl) maxNodesEl.addEventListener("change", refreshAll);
+function applyCurrentLayout() {
+  if (!cy || cy.elements().length === 0) return;
+  const presetEl = el("layoutPreset");
+  const preset = (presetEl && presetEl.value) ? presetEl.value : "groups";
+  if (preset === "groups") {
+    runGroupsLayout();
+  } else {
+    const l = cy.layout(getLayoutOpts());
+    l.one('layoutstop', afterGroupsLayout);
+    l.run();
+  }
+}
 const layoutPresetEl = el("layoutPreset");
-if (layoutPresetEl) layoutPresetEl.addEventListener("change", () => {
-  if (cy && cy.elements().length > 0) cy.layout(getLayoutOpts()).run();
-});
+if (layoutPresetEl) layoutPresetEl.addEventListener("change", applyCurrentLayout);
 const searchBox = el("searchBox");
 if (searchBox) searchBox.addEventListener("keydown", (ev) => { if (ev.key === "Enter") applySearch(); });
 
@@ -1192,9 +1269,7 @@ if (searchBox) searchBox.addEventListener("keydown", (ev) => { if (ev.key === "E
   if (s) s.addEventListener("input", () => { const v = el(valId); if(v) v.textContent = fmt(s.value); });
 });
 const rerunLayout = el("rerunLayout");
-if (rerunLayout) rerunLayout.addEventListener("click", () => {
-  if (cy && cy.elements().length > 0) cy.layout(getLayoutOpts()).run();
-});
+if (rerunLayout) rerunLayout.addEventListener("click", applyCurrentLayout);
 const fitGraph = el("fitGraph");
 if (fitGraph) fitGraph.addEventListener("click", () => { if (cy) cy.fit(undefined, 40); });
 
