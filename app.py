@@ -1286,6 +1286,17 @@ refreshAll().then(() => {
     if (cy && cy.elements().length > 0) {
       const graphEl = el("graph");
       if (graphEl) graphEl.style.visibility = "hidden";
+
+      // Find the artist node and keep only its neighborhood — strip everything else
+      // so the concentric layout radiates cleanly from the artist outward.
+      const artistNode = cy.nodes().filter(n =>
+        (n.data('label') || '').toLowerCase() === focusArtist.toLowerCase()
+      );
+      if (artistNode.length > 0) {
+        const keep = artistNode.closedNeighborhood();
+        cy.elements().not(keep).remove();
+      }
+
       const l = cy.layout(getLayoutOpts());
       l.one('layoutstop', () => {
         cy.fit(undefined, 60);
