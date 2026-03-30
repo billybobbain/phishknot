@@ -222,7 +222,12 @@ def campaigns_page():
   h1 { font-size: 22px; font-weight: 700; margin: 0 0 4px; }
   .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
-  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; display: flex; flex-direction: column; gap: 0; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; display: flex; flex-direction: column; gap: 0; transition: box-shadow 0.2s; }
+  .card.hot  { border-color: rgba(46,204,113,0.5);  box-shadow: 0 0 14px rgba(46,204,113,0.18); }
+  .card.warm { border-color: rgba(230,126,34,0.45); box-shadow: 0 0 10px rgba(230,126,34,0.14); }
+  .heat-dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:5px; vertical-align:middle; }
+  .spark-wrap { padding: 0 16px 12px; }
+  .spark-label { font-size:10px; color:var(--muted); margin-bottom:3px; }
   .card-thumb-link { display: block; border-bottom: 1px solid var(--border); }
   .card-thumb { width: 100%; height: 220px; object-fit: cover; display: block; transition: opacity 0.15s; }
   .card-thumb-link:hover .card-thumb { opacity: 0.85; }
@@ -271,6 +276,7 @@ def campaigns_page():
       Sort:
       <select id="sortMode" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:13px">
         <option value="last_seen">Last seen</option>
+        <option value="velocity">Velocity (7d)</option>
         <option value="first_seen">First seen</option>
         <option value="brand_count">Brand count</option>
         <option value="url_count">URL count</option>
@@ -320,6 +326,31 @@ function initTimePickerC() {
   if (untilEl) untilEl.addEventListener("change", () => { localStorage.setItem("pk_until", untilEl.value); load(); });
 }
 
+function heatClass(daysAgo) {
+  if (daysAgo == null || daysAgo > 9000) return '';
+  if (daysAgo <= 7)  return 'hot';
+  if (daysAgo <= 30) return 'warm';
+  return '';
+}
+
+function sparkSVG(spark, heat) {
+  if (!spark || !spark.length) return '';
+  const max = Math.max(...spark, 1);
+  const W = 100, H = 22, n = spark.length;
+  const pts = spark.map((v, i) =>
+    `${((i / (n - 1)) * W).toFixed(1)},${(H - (v / max) * H).toFixed(1)}`
+  ).join(' ');
+  const col = heat === 'hot' ? '#2ecc71' : heat === 'warm' ? '#e67e22' : '#445';
+  const total = spark.reduce((a,b) => a+b, 0);
+  if (!total) return '';
+  return `<div class="spark-wrap">
+    <div class="spark-label">30d activity · ${spark[spark.length-1]>0?spark[spark.length-1]+' today':''}</div>
+    <svg width="100%" height="${H}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+      <polyline points="${pts}" fill="none" stroke="${col}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+  </div>`;
+}
+
 function sortAndRender() {
   const mode = document.getElementById("sortMode").value;
   const sorted = [..._campaigns].sort((a, b) => {
@@ -327,23 +358,36 @@ function sortAndRender() {
     if (mode === "first_seen")  return (a.first_seen || "") > (b.first_seen || "") ? -1 : 1;
     if (mode === "brand_count") return b.brand_count - a.brand_count;
     if (mode === "url_count")   return b.url_count - a.url_count;
+    if (mode === "velocity")    return (b.velocity || 0) - (a.velocity || 0);
     return 0;
   });
   document.getElementById("grid").innerHTML = sorted.map(c => {
-    const img = c.image_url ? `<img class="avatar" src="${c.image_url}" alt="${c.label}" onerror="this.style.display='none'">` : `<div class="avatar" style="display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px;color:var(--artist)">${(c.label||"?")[0].toUpperCase()}</div>`;
+    const heat = heatClass(c.days_ago);
+    const heatDot = heat === 'hot'  ? '<span class="heat-dot" style="background:#2ecc71"></span>'
+                  : heat === 'warm' ? '<span class="heat-dot" style="background:#e67e22"></span>'
+                  : '';
+    const img = c.image_url
+      ? `<img class="avatar" src="${c.image_url}" alt="${c.label}" onerror="this.style.display='none'">`
+      : `<div class="avatar" style="display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px;color:var(--artist)">${(c.label||"?")[0].toUpperCase()}</div>`;
     const brands = (c.brands || []).map(b => `<span class="brand-tag">${b}</span>`).join("");
     const stats = `${c.url_count} URL${c.url_count !== 1 ? "s" : ""} · ${c.brand_count} brand${c.brand_count !== 1 ? "s" : ""}`;
+    const daysAgoStr = c.days_ago != null && c.days_ago < 9000
+      ? (c.days_ago === 0 ? 'today' : c.days_ago === 1 ? 'yesterday' : `${c.days_ago}d ago`)
+      : '';
     const dates = (c.first_seen || c.last_seen)
-      ? `<div style="font-size:11px;color:var(--muted);margin-top:2px">First: ${c.first_seen || "?"} · Last: ${c.last_seen || "?"}</div>`
+      ? `<div style="font-size:11px;color:var(--muted);margin-top:2px">First: ${c.first_seen || "?"} · Last: ${c.last_seen || "?"}${daysAgoStr ? ' (' + daysAgoStr + ')' : ''}</div>`
       : "";
     const exploreHref = `/graph/interactive?focus_artist=${encodeURIComponent(c.label)}`;
-    const thumb = c.thumb_url ? `<a class="card-thumb-link" href="${exploreHref}"><img class="card-thumb" src="${c.thumb_url}" alt="${c.label} campaign" onerror="this.parentElement.style.display='none'"></a>` : "";
-    return `<div class="card">
+    const thumb = c.thumb_url
+      ? `<a class="card-thumb-link" href="${exploreHref}"><img class="card-thumb" src="${c.thumb_url}" alt="${c.label} campaign" onerror="this.parentElement.style.display='none'"></a>`
+      : "";
+    return `<div class="card ${heat}">
       ${thumb}
       <div class="card-body">
-        <div class="card-header">${img}<div><div class="card-title">${c.label}</div><div class="card-stats">${stats}</div>${dates}</div></div>
+        <div class="card-header">${img}<div><div class="card-title">${heatDot}${c.label}</div><div class="card-stats">${stats}</div>${dates}</div></div>
         <div class="brands">${brands || "<span style='color:var(--muted);font-size:11px'>No brands</span>"}</div>
       </div>
+      ${sparkSVG(c.spark, heat)}
     </div>`;
   }).join("");
 }
@@ -430,19 +474,36 @@ def campaigns_data():
                     "last_seen": None,
                 })
 
-        # Pull first/last seen from url_history for each artist
+        # Pull first/last seen + 30-day sparkline from url_history for each artist
         try:
             import sqlite3 as _sqlite3
+            from datetime import date as _date, timedelta as _td
+            _today = _date.today()
+            _days_30 = [(_today - _td(days=29 - i)).isoformat() for i in range(30)]
             with _sqlite3.connect(str(DATA_DIR / "url_history.db")) as _conn:
                 for c in campaigns:
                     _lbl = c["label"]
+                    _pat = f'%"{_lbl}"%'
                     row = _conn.execute(
                         "SELECT MIN(first_seen), MAX(last_seen) FROM url_history "
-                        "WHERE artists LIKE ?", (f'%"{_lbl}"%',)
+                        "WHERE artists LIKE ?", (_pat,)
                     ).fetchone()
                     if row and row[0]:
                         c["first_seen"] = row[0][:10]
-                        c["last_seen"] = row[1][:10]
+                        c["last_seen"]  = row[1][:10]
+                        c["days_ago"]   = (_today - _date.fromisoformat(row[1][:10])).days
+                    else:
+                        c["days_ago"] = 9999
+                    # 30-day sparkline
+                    spark_rows = _conn.execute(
+                        "SELECT DATE(first_seen), COUNT(*) FROM url_history "
+                        "WHERE artists LIKE ? AND first_seen >= ? "
+                        "GROUP BY DATE(first_seen)",
+                        (_pat, _days_30[0])
+                    ).fetchall()
+                    day_map = {r[0]: r[1] for r in spark_rows}
+                    c["spark"]    = [day_map.get(d, 0) for d in _days_30]
+                    c["velocity"] = sum(c["spark"][-7:])
         except Exception:
             pass
 
