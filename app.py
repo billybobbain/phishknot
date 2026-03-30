@@ -895,9 +895,11 @@ def serve_interactive_graph():
       <input type="range" id="tlSlider" min="0" max="10000" value="0">
       <span style="font-size:12px;color:var(--muted)">Speed</span>
       <select id="tlSpeed" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:3px 6px;font-size:12px">
-        <option value="7">7 d/s</option>
-        <option value="30" selected>30 d/s</option>
-        <option value="90">90 d/s</option>
+        <option value="1">1 d/s</option>
+        <option value="3">3 d/s</option>
+        <option value="7" selected>7 d/s</option>
+        <option value="14">14 d/s</option>
+        <option value="30">30 d/s</option>
         <option value="365">1 yr/s</option>
       </select>
     </div>
@@ -1934,7 +1936,7 @@ function _tl_frame(wallNow) {
   if (!_tl_playing) return;
   const dt = _tl_last_wall ? (wallNow - _tl_last_wall) : 0;
   _tl_last_wall = wallNow;
-  const speedDays = parseFloat((el('tlSpeed') || {}).value || 30);
+  const speedDays = parseFloat((el('tlSpeed') || {}).value || 7);
   _tl_playhead = Math.min(_tl_range.max, _tl_playhead + dt * speedDays * 86400);
   _tl_apply_playhead();
   if (_tl_playhead >= _tl_range.max) {
