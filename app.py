@@ -778,10 +778,15 @@ def serve_interactive_graph():
       <button class="btn" id="toggleEdges" style="flex:1">Edges</button>
       <button class="btn" id="toggleLabels" style="flex:1">Labels</button>
     </div>
-    <div class="field" id="rotateField" style="display:none">
-      <div class="label"> </div>
-      <div class="value">
-        <button class="btn" id="rotate3DBtn" style="width:100%">&#9654; Rotate</button>
+    <div class="field" id="rotateField" style="display:none;grid-column:1/-1;flex-direction:column;gap:4px">
+      <div style="display:flex;gap:6px">
+        <button class="btn" id="rotate3DBtn" style="flex:1">&#9654; Rotate</button>
+        <select id="rotAxis" style="flex:1;background:var(--panel);color:var(--fg);border:1px solid #334;border-radius:4px;padding:3px 6px;font-size:12px">
+          <option value="Y">Y axis</option>
+          <option value="X">X axis</option>
+          <option value="Z">Z axis</option>
+          <option value="tumble">Tumble</option>
+        </select>
       </div>
     </div>
     <div class="field">
@@ -1126,29 +1131,33 @@ function afterGroupsLayout() {
 
 // ── 3D Perspective + rotation ────────────────────────────────────────────────
 // _3d_base: node_id → {x0, y0, z0} centered, normalized to ±400
-// Two rotation angles: _3d_angle (Y-axis, horizontal) + _3d_tilt (X-axis, vertical)
+// Rotation angles: Y (yaw), X (tilt/pitch), Z (roll)
 let _3d_base = {}, _3d_screenCx = 0, _3d_screenCy = 0;
-let _3d_angle = 0, _3d_tilt = 0;
+let _3d_angle = 0, _3d_tilt = 0, _3d_roll = 0;
 let _3d_raf = null, _3d_spinning = false, _3d_last_ts = 0;
 let _3d_drag = null; // { x, y, startAngle, startTilt, wasSpinning }
 const FOCAL_3D = 2000;
 const ROT_SPEED = 0.007; // radians per 16ms (≈60fps baseline)
 
-// Core render: apply Ry(_3d_angle) then Rx(_3d_tilt), project, update styles.
+// Core render: Rz(roll) → Ry(angle/yaw) → Rx(tilt/pitch), then project.
 function _3d_render_frame() {
   if (!cy || !Object.keys(_3d_base).length) return;
   const cosA = Math.cos(_3d_angle), sinA = Math.sin(_3d_angle);
   const cosT = Math.cos(_3d_tilt),  sinT = Math.sin(_3d_tilt);
+  const cosR = Math.cos(_3d_roll),  sinR = Math.sin(_3d_roll);
   cy.batch(() => {
     cy.nodes(':visible').filter(n => n.data('type') !== 'registered_domain').forEach(n => {
       const b = _3d_base[n.id()];
       if (!b) return;
-      // Ry(angle): rotate around Y
-      const xr  = b.x0 * cosA + b.z0 * sinA;
-      const zry = -b.x0 * sinA + b.z0 * cosA;
-      // Rx(tilt): rotate around X
-      const yr  = b.y0 * cosT - zry * sinT;
-      const zr  = b.y0 * sinT + zry * cosT;
+      // Rz(roll): rotate around Z (screen depth axis)
+      const xz = b.x0 * cosR - b.y0 * sinR;
+      const yz = b.x0 * sinR + b.y0 * cosR;
+      // Ry(angle/yaw): rotate around Y
+      const xr  = xz * cosA + b.z0 * sinA;
+      const zry = -xz * sinA + b.z0 * cosA;
+      // Rx(tilt/pitch): rotate around X
+      const yr  = yz * cosT - zry * sinT;
+      const zr  = yz * sinT + zry * cosT;
       const s   = FOCAL_3D / (FOCAL_3D + zr);
       n.position({ x: _3d_screenCx + xr * s, y: _3d_screenCy + yr * s });
       const tlHidden = n.hasClass('tl-hidden');
@@ -1171,9 +1180,14 @@ function stop3DRotation() {
 
 function _apply3DFrame(ts) {
   if (!cy || !_3d_spinning) return;
-  const dt = (_3d_last_ts && ts > _3d_last_ts) ? Math.min(ts - _3d_last_ts, 50) : 16;
+  const dt    = (_3d_last_ts && ts > _3d_last_ts) ? Math.min(ts - _3d_last_ts, 50) : 16;
   _3d_last_ts = ts;
-  _3d_angle += ROT_SPEED * (dt / 16);
+  const step  = ROT_SPEED * (dt / 16);
+  const axis  = (el('rotAxis') || {}).value || 'Y';
+  if      (axis === 'Y')      { _3d_angle += step; }
+  else if (axis === 'X')      { _3d_tilt  += step; }
+  else if (axis === 'Z')      { _3d_roll  += step; }
+  else /* tumble */           { _3d_angle += step; _3d_tilt += step * 0.37; _3d_roll += step * 0.19; }
   _3d_render_frame();
   _3d_raf = requestAnimationFrame(_apply3DFrame);
 }
@@ -1227,7 +1241,7 @@ function _3d_disable_interaction() {
 function run3DLayout() {
   if (!cy) return;
   stop3DRotation();
-  _3d_base = {};
+  _3d_base = {}; _3d_angle = 0; _3d_tilt = 0; _3d_roll = 0;
   const baseLayout = cy.layout({
     name: 'cose', animate: false, fit: false, padding: 40,
     ..._coseRepulsionOpts(), nestingFactor: 1.2, componentSpacing: 80,
@@ -1276,7 +1290,7 @@ function run3DLayout() {
 async function run3DJuliaLayout() {
   if (!cy) return;
   stop3DRotation();
-  _3d_base = {};
+  _3d_base = {}; _3d_angle = 0; _3d_tilt = 0; _3d_roll = 0;
   const c    = _juliaGetC();
   const res  = (el('juliaRes')  || {}).value || 600;
   const iter = (el('juliaIter') || {}).value || 256;
@@ -1924,10 +1938,8 @@ function _tl_frame(wallNow) {
   _tl_playhead = Math.min(_tl_range.max, _tl_playhead + dt * speedDays * 86400);
   _tl_apply_playhead();
   if (_tl_playhead >= _tl_range.max) {
-    _tl_playing = false;
-    const btn = el('tlPlayBtn');
-    if (btn) btn.innerHTML = '&#9654;';
-    return;
+    _tl_playhead = _tl_range.min; // loop
+    _tl_last_wall = 0;
   }
   _tl_raf_id = requestAnimationFrame(_tl_frame);
 }
